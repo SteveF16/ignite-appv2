@@ -1,25 +1,23 @@
-/* global __firebase_config, __app_id, __initial_auth_token */
+/* App.js */
+
 import React, { useState, useEffect, createContext, useContext } from 'react';
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, signOut } from 'firebase/auth';
-import { getFirestore, collection, addDoc /*, query, onSnapshot */ } from 'firebase/firestore'; // Removed unused imports for 'query', 'onSnapshot' to clear warnings
+import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
+import { getFirestore, collection, addDoc, onSnapshot, query, serverTimestamp } from 'firebase/firestore';
+import {
+  ChevronDown, ChevronRight, Home, Plus, Edit, Trash2, Briefcase, Users, Warehouse, Banknote, Brain, X, Menu
+} from 'lucide-react';
 
-// Ensure Tailwind CSS is loaded for styling
-// This script tag is typically in public/index.html, but included here for completeness
-// <script src="https://cdn.tailwindcss.com"></script>
+import firebaseConfig from './FirebaseConfig'; // ✅ This imports your config safely
 
-// --- Firebase Configuration and Context ---
-// Global variables provided by the Canvas environment for Firebase setup.
-// For local development, these will be undefined, so we provide default fallbacks.
-// YOU MUST REPLACE firebaseConfig AND apiKey WITH YOUR ACTUAL CREDENTIALS FOR FULL LOCAL FUNCTIONALITY.
-const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id'; // 'default-app-id' for local testing
-const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+// You can hardcode or later replace these with env variables
+const appId = 'ignite-appv2-data'; // 👈 Match your Firebase project ID or app-specific ID
+const initialAuthToken = null;     // 👈 Or pull from env/config if needed
 
-// Create a context for Firebase services and user data
 const FirebaseContext = createContext(null);
 
-// Firebase Provider component to initialize Firebase and manage authentication state
+
+// Firebase Provider component to handle authentication and initialization
 const FirebaseProvider = ({ children }) => {
     const [db, setDb] = useState(null);
     const [auth, setAuth] = useState(null);
@@ -29,13 +27,6 @@ const FirebaseProvider = ({ children }) => {
     useEffect(() => {
         const initializeFirebase = async () => {
             try {
-                // Initialize Firebase app only if firebaseConfig is not empty
-                if (Object.keys(firebaseConfig).length === 0) {
-                    console.warn("Firebase config is empty. Data saving and authentication will not work locally until you provide your Firebase credentials in src/App.js.");
-                    setLoadingAuth(false);
-                    return;
-                }
-
                 const app = initializeApp(firebaseConfig);
                 const authInstance = getAuth(app);
                 const dbInstance = getFirestore(app);
@@ -43,32 +34,36 @@ const FirebaseProvider = ({ children }) => {
                 setAuth(authInstance);
                 setDb(dbInstance);
 
-                // Sign in with custom token if available, otherwise anonymously
+                // Check for the initialAuthToken provided by the Canvas environment
                 if (initialAuthToken) {
                     await signInWithCustomToken(authInstance, initialAuthToken);
                 } else {
                     await signInAnonymously(authInstance);
                 }
 
-                // Listen for authentication state changes
+                // Listen for auth state changes
                 const unsubscribe = onAuthStateChanged(authInstance, (user) => {
-                    setCurrentUser(user);
-                    setLoadingAuth(false); // Authentication state is ready
+                    if (user) {
+                        setCurrentUser(user);
+                    } else {
+                        setCurrentUser(null);
+                    }
+                    setLoadingAuth(false);
                 });
 
-                // Cleanup subscription on component unmount
                 return () => unsubscribe();
             } catch (error) {
-                console.error("Error initializing Firebase:", error);
-                setLoadingAuth(false); // Stop loading even if there's an error
+                console.error("Firebase initialization or authentication failed:", error);
+                setLoadingAuth(false);
             }
         };
-
         initializeFirebase();
-    }, []); // Empty dependency array ensures this runs once on mount
+    }, []);
 
-    // Provide Firebase instances and user data to children components
-    const value = { db, auth, currentUser, loadingAuth };
+    const userId = currentUser?.uid || 'anonymous';
+
+    // The value provided by the context
+    const value = { db, auth, currentUser, userId, loadingAuth };
 
     return (
         <FirebaseContext.Provider value={value}>
@@ -77,509 +72,460 @@ const FirebaseProvider = ({ children }) => {
     );
 };
 
-// Custom hook to easily access Firebase context
+// Custom hook to use the Firebase context
 const useFirebase = () => useContext(FirebaseContext);
 
-// --- Treeview Data Structure ---
-// Defines the structure of the navigation tree with main branches and their sub-branches.
-const treeData = {
-    Customers: ['Add Customer', 'View Customers', 'Change Customer', 'Delete Customer'],
-    Vendors: ['Add Vendor', 'View Vendors', 'Change Vendor', 'Delete Vendor'],
-    Inventory: ['Add Item', 'View Items', 'Change Item', 'Delete Item'],
-    Banking: ['Add Transaction', 'View Transactions', 'Reconcile'],
-    Company: ['Company Info', 'Departments', 'Locations'],
-    Employees: ['Add Employee', 'View Employees', 'Change Employee', 'Delete Employee'],
-};
 
-// --- Reusable Components ---
+// --- Components for different views ---
 
-// Loading Spinner component for visual feedback during async operations
-const LoadingSpinner = () => (
-    <div className="flex justify-center items-center py-4">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
-    </div>
-);
-
-// MessageBox component for displaying success or error messages
-const MessageBox = ({ message, type, onClose }) => {
-    // Determine background and border colors based on message type
-    const bgColor = type === 'error' ? 'bg-red-100 border-red-400 text-red-700' : 'bg-green-100 border-green-400 text-green-700';
-    const borderColor = type === 'error' ? 'border-red-500' : 'border-green-500';
-
-    if (!message) return null; // Don't render if there's no message
-
-    return (
-        <div className={`fixed top-4 left-1/2 -translate-x-1/2 p-4 rounded-md shadow-lg z-50 ${bgColor} border-l-4 ${borderColor} flex items-center justify-between`}>
-            <p className="font-semibold">{message}</p>
-            <button
-                onClick={onClose}
-                className="ml-4 px-3 py-1 bg-white rounded-full text-gray-700 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-gray-300"
-            >
-                &times; {/* Close button */}
-            </button>
-        </div>
-    );
-};
-
-
-// TreeView Component for the left-side navigation panel
-const TreeView = ({ onSelectBranch }) => {
-    const [openBranches, setOpenBranches] = useState({}); // State to manage open/closed branches
-
-    // Toggles the open/closed state of a branch
-    const toggleBranch = (branchName) => {
-        setOpenBranches(prev => ({
-            ...prev,
-            [branchName]: !prev[branchName]
-        }));
-    };
-
-    return (
-        <div className="w-full h-full p-4 bg-gray-50 rounded-lg shadow-inner overflow-y-auto">
-            <h2 className="text-xl font-bold text-gray-800 mb-4 pb-2 border-b border-gray-200">Navigation</h2>
-            {Object.entries(treeData).map(([branch, subBranches]) => (
-                <div key={branch} className="mb-2">
-                    <button
-                        onClick={() => toggleBranch(branch)}
-                        className="flex items-center justify-between w-full py-2 px-3 text-left text-lg font-medium text-blue-700 hover:bg-blue-100 rounded-md transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-blue-300"
-                    >
-                        {branch}
-                        <svg
-                            className={`w-5 h-5 transition-transform duration-200 ${openBranches[branch] ? 'rotate-90' : ''}`}
-                            fill="none"
-                            stroke="currentColor"
-                            viewBox="0 0 24 24"
-                            xmlns="http://www.w3.org/2000/svg"
-                        >
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7"></path>
-                        </svg>
-                    </button>
-                    {openBranches[branch] && (
-                        <div className="ml-4 border-l border-gray-200 pl-3 mt-1">
-                            {subBranches.map(subBranch => (
-                                <button
-                                    key={subBranch}
-                                    onClick={() => onSelectBranch(branch, subBranch)}
-                                    className="block w-full py-1.5 px-2 text-left text-gray-600 hover:bg-gray-200 rounded-md transition-colors duration-200 text-base focus:outline-none focus:ring-2 focus:ring-gray-300"
-                                >
-                                    {subBranch}
-                                </button>
-                            ))}
-                        </div>
-                    )}
-                </div>
-            ))}
-        </div>
-    );
-};
-
-// Data Entry Form component for inputting and saving data to Firestore
+// Data Entry Form Component
 const DataEntryForm = ({ selectedBranch, selectedSubBranch }) => {
-    const { db, currentUser } = useFirebase();
-    const [formData, setFormData] = useState({}); // State to hold form input data
-    const [message, setMessage] = useState(''); // State for message box message
-    const [messageType, setMessageType] = useState(''); // State for message box type (success/error)
-    const [loading, setLoading] = useState(false); // State for loading indicator
+    const { db, userId, loadingAuth } = useFirebase();
+    const [formData, setFormData] = useState({});
+    const [message, setMessage] = useState('');
+    const [messageType, setMessageType] = useState('');
 
-    // Reset form data and messages when the selected branch/sub-branch changes
+    // Clear form data when branch/sub-branch changes
     useEffect(() => {
         setFormData({});
         setMessage('');
     }, [selectedBranch, selectedSubBranch]);
 
-    // Handles changes in form input fields
-    const handleChange = (e) => {
-        setFormData({ ...formData, [e.target.name]: e.target.value });
+    const handleInputChange = (e) => {
+        const { name, value } = e.target;
+        setFormData(prev => ({ ...prev, [name]: value }));
     };
 
-    // Handles form submission, saves data to Firestore
-    const handleSubmit = async (e) => {
-        e.preventDefault(); // Prevent default form submission behavior
+    const getFormFields = () => {
+        // Define fields based on the selected branch and sub-branch
+        const fields = {
+            'Customers': {
+                'Add Customer': ['customerName', 'contactPerson', 'email', 'phone'],
+                'Change Customer': ['customerId', 'customerName', 'contactPerson', 'email', 'phone'],
+                'Delete Customer': ['customerId'],
+            },
+            'Vendors': {
+                'Add Vendor': ['vendorName', 'contactPerson', 'email', 'phone'],
+                'Change Vendor': ['vendorId', 'vendorName', 'contactPerson', 'email', 'phone'],
+                'Delete Vendor': ['vendorId'],
+            },
+            'Inventory': {
+                'Add Inventory': ['itemName', 'quantity', 'cost', 'supplier'],
+                'Change Inventory': ['itemId', 'itemName', 'quantity', 'cost', 'supplier'],
+                'Delete Inventory': ['itemId'],
+            },
+            'Banking': {
+                'Add Transaction': ['description', 'amount', 'date', 'type'],
+                'Change Transaction': ['transactionId', 'description', 'amount', 'date', 'type'],
+                'Delete Transaction': ['transactionId'],
+            },
+            'Company': {
+                'Add Company Info': ['companyName', 'address', 'taxId'],
+                'Change Company Info': ['companyId', 'companyName', 'address', 'taxId'],
+                'Delete Company Info': ['companyId'],
+            },
+            'Employees': {
+                'Add Employee': ['employeeName', 'position', 'hireDate', 'salary'],
+                'Change Employee': ['employeeId', 'employeeName', 'position', 'hireDate', 'salary'],
+                'Delete Employee': ['employeeId'],
+            },
+        };
 
-        // Check if user is authenticated and Firestore is available
-        if (!currentUser || !db) {
-            setMessage('Authentication required to save data. Please ensure Firebase is configured.');
-            setMessageType('error');
+        return fields[selectedBranch]?.[selectedSubBranch] || [];
+    };
+
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+        if (loadingAuth || !db) {
+            setMessage({ text: 'Authentication not ready. Please wait.', type: 'error' });
             return;
         }
 
-        setLoading(true); // Show loading spinner
-        setMessage(''); // Clear previous messages
-
         try {
-            // Determine the Firestore collection name based on the main branch
-            const collectionName = selectedBranch.toLowerCase();
-            // Construct the path for the user's private data collection
-            const userDocRef = collection(db, `artifacts/${appId}/users/${currentUser.uid}/${collectionName}`);
+            // Determine the collection path based on whether it's public or private data
+            const collectionPath = `/artifacts/${appId}/users/${userId}/${selectedBranch}`;
 
-            // Add the form data to Firestore
-            await addDoc(userDocRef, {
+            const docData = {
                 ...formData,
-                timestamp: new Date(), // Add a timestamp
-                userId: currentUser.uid, // Store the user ID
-                branch: selectedBranch,
                 subBranch: selectedSubBranch,
-            });
+                timestamp: serverTimestamp(),
+            };
 
-            setMessage(`Data for ${selectedSubBranch} saved successfully!`);
-            setMessageType('success');
-            setFormData({}); // Clear form after successful submission
+            await addDoc(collection(db, collectionPath), docData);
+
+            setMessage({ text: `Successfully saved ${selectedSubBranch} data!`, type: 'success' });
+            setFormData({}); // Reset the form after successful submission
+
         } catch (error) {
-            console.error("Error saving data:", error);
-            setMessage(`Error saving data: ${error.message}`);
-            setMessageType('error');
-        } finally {
-            setLoading(false); // Hide loading spinner
+            console.error("Error adding document: ", error);
+            setMessage({ text: `Error saving data: ${error.message}`, type: 'error' });
         }
     };
 
-    // Display a prompt if no branch/sub-branch is selected
-    if (!selectedBranch || !selectedSubBranch) {
+    const formFields = getFormFields();
+    if (formFields.length === 0) {
         return (
-            <div className="p-6 text-center text-gray-600">
-                Select an option from the navigation tree to get started.
+            <div className="text-center p-10 text-gray-700">
+                <h2 className="text-2xl font-bold mb-4">Select an action</h2>
+                <p>Please select an option from the tree on the left to begin data entry.</p>
             </div>
         );
     }
 
-    // Dynamically renders form fields based on the selected sub-branch
-    const renderFormFields = () => {
-        switch (selectedSubBranch) {
-            case 'Add Customer':
-                return (
-                    <>
-                        <input type="text" name="customerName" placeholder="Customer Name" value={formData.customerName || ''} onChange={handleChange} className="input-field" required />
-                        <input type="text" name="contactPerson" placeholder="Contact Person" value={formData.contactPerson || ''} onChange={handleChange} className="input-field" />
-                        <input type="email" name="customerEmail" placeholder="Email" value={formData.customerEmail || ''} onChange={handleChange} className="input-field" />
-                        <input type="tel" name="customerPhone" placeholder="Phone" value={formData.customerPhone || ''} onChange={handleChange} className="input-field" />
-                    </>
-                );
-            case 'Add Vendor':
-                return (
-                    <>
-                        <input type="text" name="vendorName" placeholder="Vendor Name" value={formData.vendorName || ''} onChange={handleChange} className="input-field" required />
-                        <input type="text" name="service" placeholder="Service/Product" value={formData.service || ''} onChange={handleChange} className="input-field" />
-                        <input type="email" name="vendorEmail" placeholder="Email" value={formData.vendorEmail || ''} onChange={handleChange} className="input-field" />
-                    </>
-                );
-            case 'Add Item':
-                return (
-                    <>
-                        <input type="text" name="itemName" placeholder="Item Name" value={formData.itemName || ''} onChange={handleChange} className="input-field" required />
-                        <input type="number" name="quantity" placeholder="Quantity" value={formData.quantity || ''} onChange={handleChange} className="input-field" />
-                        <input type="text" name="unit" placeholder="Unit (e.g., pcs, kg)" value={formData.unit || ''} onChange={handleChange} className="input-field" />
-                    </>
-                );
-            case 'Add Transaction':
-                return (
-                    <>
-                        <input type="text" name="transactionType" placeholder="Transaction Type (e.g., Deposit, Withdrawal)" value={formData.transactionType || ''} onChange={handleChange} className="input-field" required />
-                        <input type="number" name="amount" placeholder="Amount" value={formData.amount || ''} onChange={handleChange} className="input-field" />
-                        <input type="date" name="date" placeholder="Date" value={formData.date || ''} onChange={handleChange} className="input-field" />
-                    </>
-                );
-            case 'Add Employee':
-                return (
-                    <>
-                        <input type="text" name="employeeName" placeholder="Employee Name" value={formData.employeeName || ''} onChange={handleChange} className="input-field" required />
-                        <input type="email" name="employeeEmail" placeholder="Email" value={formData.employeeEmail || ''} onChange={handleChange} className="input-field" />
-                        <input type="tel" name="employeePhone" placeholder="Phone" value={formData.employeePhone || ''} onChange={handleChange} className="input-field" />
-                    </>
-                );
-            // For "View", "Change", "Delete", "Company Info", "Departments", "Locations" - display a message
-            case 'Company Info':
-            case 'Departments':
-            case 'Locations':
-            case 'View Customers':
-            case 'Change Customer':
-            case 'Delete Customer':
-            case 'View Vendors':
-            case 'Change Vendor':
-            case 'Delete Vendor':
-            case 'View Items':
-            case 'Change Item':
-            case 'Delete Item':
-            case 'View Transactions':
-            case 'Reconcile':
-            case 'View Employees':
-            case 'Change Employee':
-            case 'Delete Employee':
-                return (
-                    <div className="p-6 text-center text-gray-600">
-                        <p>Functionality for "{selectedSubBranch}" will be developed in future iterations.</p>
-                        {selectedSubBranch.startsWith('View') && <p>Displaying data for {selectedBranch} would go here.</p>}
-                    </div>
-                );
-            default:
-                return (
-                    <div className="p-6 text-center text-gray-600">
-                        No specific form for "{selectedSubBranch}".
-                    </div>
-                );
-        }
-    };
-
     return (
-        <div className="p-6 bg-white rounded-lg shadow-md">
-            <h2 className="text-2xl font-semibold text-gray-800 mb-4 pb-2 border-b border-gray-200">
-                {selectedBranch} &gt; {selectedSubBranch}
-            </h2>
+        <div className="p-4 md:p-8 space-y-6">
+            <h2 className="text-2xl font-bold text-gray-800">Data Entry: {selectedSubBranch}</h2>
+            {message && (
+                <div className={`p-4 rounded-lg text-white ${message.type === 'success' ? 'bg-green-500' : 'bg-red-500'}`}>
+                    {message.text}
+                </div>
+            )}
             <form onSubmit={handleSubmit} className="space-y-4">
-                {renderFormFields()}
-                {/* Only show save button for 'Add' operations */}
-                {['Add Customer', 'Add Vendor', 'Add Item', 'Add Transaction', 'Add Employee'].includes(selectedSubBranch) && (
-                    <button
-                        type="submit"
-                        className="w-full bg-blue-600 text-white py-3 px-4 rounded-md hover:bg-blue-700 transition-colors duration-200 text-lg font-bold shadow-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
-                        disabled={loading} // Disable button while loading
-                    >
-                        {loading ? <LoadingSpinner /> : `Save ${selectedBranch.slice(0, -1)}`}
-                    </button>
-                )}
+                {formFields.map(field => (
+                    <div key={field} className="flex flex-col">
+                        <label htmlFor={field} className="text-sm font-medium text-gray-700 capitalize">
+                            {field.replace(/([A-Z])/g, ' $1').trim()}:
+                        </label>
+                        <input
+                            type="text"
+                            id={field}
+                            name={field}
+                            value={formData[field] || ''}
+                            onChange={handleInputChange}
+                            required
+                            className="mt-1 block w-full px-3 py-2 bg-gray-50 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
+                        />
+                    </div>
+                ))}
+                <button
+                    type="submit"
+                    className="w-full px-4 py-2 mt-4 text-lg font-semibold text-white bg-purple-600 rounded-md shadow-md hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 transition duration-200"
+                >
+                    Save
+                </button>
             </form>
-            {/* Display messages using the MessageBox component */}
-            <MessageBox message={message} type={messageType} onClose={() => setMessage('')} />
         </div>
     );
 };
 
-// AI/ML Data Analysis Component for interacting with the Gemini API
+// AI Data Analysis Component
 const AIDataAnalysis = () => {
-    const [inputText, setInputText] = useState(''); // State for user input text
-    const [analysisResult, setAnalysisResult] = useState(''); // State for AI analysis result
-    const [loading, setLoading] = useState(false); // State for loading indicator
-    const [message, setMessage] = useState(''); // State for message box message
-    const [messageType, setMessageType] = useState(''); // State for message box type
+    const { db, userId, loadingAuth } = useFirebase();
+    const [analysisResult, setAnalysisResult] = useState('');
+    const [loadingAnalysis, setLoadingAnalysis] = useState(false);
+    const [message, setMessage] = useState('');
 
-    // Handles the AI analysis request
-    const handleAnalyze = async () => {
-        if (!inputText.trim()) {
-            setMessage('Please enter some text to analyze.');
-            setMessageType('error');
+    const runAnalysis = async () => {
+        if (loadingAuth || !db) {
+            setMessage('Authentication not ready. Please wait.');
             return;
         }
 
-        setLoading(true); // Show loading spinner
-        setAnalysisResult(''); // Clear previous results
-        setMessage(''); // Clear previous messages
+        setLoadingAnalysis(true);
+        setAnalysisResult('');
+        setMessage('');
 
         try {
-            let chatHistory = [];
-            // Prepare the prompt for the AI model
-            chatHistory.push({ role: "user", parts: [{ text: `Analyze the following data/text and provide a concise summary or key insights:\n\n"${inputText}"` }] });
-            const payload = { contents: chatHistory };
-            // For local development, replace "" with your actual Gemini API key
-            const apiKey = ""; // Canvas will provide this at runtime, but locally you need to set it.
-            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
+            // Fetch all data from all collections for the current user
+            const collectionsToAnalyze = ['Customers', 'Vendors', 'Inventory', 'Banking', 'Company', 'Employees'];
+            let allData = {};
 
-            // Implement exponential backoff for retries to handle rate limits or transient errors
-            const maxRetries = 3;
-            let retries = 0;
-            let response;
-
-            while (retries < maxRetries) {
-                try {
-                    response = await fetch(apiUrl, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(payload)
+            for (const collectionName of collectionsToAnalyze) {
+                const q = query(collection(db, `/artifacts/${appId}/users/${userId}/${collectionName}`));
+                const snapshot = await new Promise((resolve) => {
+                    const unsubscribe = onSnapshot(q, (snapshot) => {
+                        unsubscribe(); // Unsubscribe after the first fetch
+                        resolve(snapshot);
+                    }, (error) => {
+                        console.error("Error fetching data for AI analysis:", error);
+                        setMessage(`Error fetching data for AI analysis: ${error.message}`);
+                        resolve(null); // Resolve with null on error to avoid hanging
                     });
+                });
 
-                    if (response.ok) {
-                        break; // Success, exit loop
-                    } else if (response.status === 429) { // Too Many Requests (Rate Limit)
-                        const delay = Math.pow(2, retries) * 1000; // Exponential backoff delay
-                        console.warn(`Rate limit hit. Retrying in ${delay / 1000}s...`);
-                        await new Promise(resolve => setTimeout(resolve, delay));
-                        retries++;
-                    } else {
-                        // Other HTTP errors, throw to catch block
-                        throw new Error(`HTTP error! status: ${response.status}`);
-                    }
-                } catch (fetchError) {
-                    console.error("Fetch attempt failed:", fetchError);
-                    if (retries === maxRetries - 1) throw fetchError; // Re-throw on last retry
-                    const delay = Math.pow(2, retries) * 1000;
-                    console.warn(`Error during fetch. Retrying in ${delay / 1000}s...`);
-                    await new Promise(resolve => setTimeout(resolve, delay));
-                    retries++;
+                if (snapshot) {
+                    allData[collectionName] = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                 }
             }
 
-            // If no successful response after retries, throw an error
-            if (!response || !response.ok) {
-                throw new Error("Failed to get a successful response after retries.");
+            const dataToAnalyze = JSON.stringify(allData, null, 2);
+
+            if (dataToAnalyze.length < 50) {
+                setAnalysisResult('No significant data to analyze. Please add some business data first.');
+                setLoadingAnalysis(false);
+                return;
             }
 
-            const result = await response.json(); // Parse the JSON response
+            const prompt = `Analyze the following JSON business data for key trends, anomalies, and insights. Provide a concise, professional summary.
+            
+            Business Data:
+            ${dataToAnalyze}`;
 
-            // Extract the text from the API response
-            if (result.candidates && result.candidates.length > 0 &&
-                result.candidates[0].content && result.candidates[0].content.parts &&
-                result.candidates[0].content.parts.length > 0) {
-                const text = result.candidates[0].content.parts[0].text;
+            const chatHistory = [];
+            chatHistory.push({ role: "user", parts: [{ text: prompt }] });
+            const payload = { contents: chatHistory };
+            const apiKey = "";
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
+            
+            const response = await fetch(apiUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            const result = await response.json();
+            const text = result?.candidates?.[0]?.content?.parts?.[0]?.text;
+
+            if (text) {
                 setAnalysisResult(text);
-                setMessage('Analysis complete!');
-                setMessageType('success');
             } else {
-                setMessage('Analysis failed: No content in response.');
-                setMessageType('error');
-                console.error("Unexpected API response structure:", result);
+                setAnalysisResult('An error occurred during AI analysis. Please try again.');
             }
+
         } catch (error) {
-            console.error("Error analyzing data:", error);
-            setMessage(`Analysis failed: ${error.message}`);
-            setMessageType('error');
+            console.error("Error during AI analysis:", error);
+            setAnalysisResult(`An error occurred: ${error.message}`);
         } finally {
-            setLoading(false); // Hide loading spinner
+            setLoadingAnalysis(false);
         }
     };
 
     return (
-        <div className="p-6 bg-white rounded-lg shadow-md">
-            <h2 className="text-2xl font-semibold text-gray-800 mb-4 pb-2 border-b border-gray-200">
-                AI/ML Data Analysis
-            </h2>
-            <div className="mb-4">
-                <label htmlFor="analysisInput" className="block text-gray-700 text-sm font-bold mb-2">
-                    Enter text for AI analysis:
-                </label>
-                <textarea
-                    id="analysisInput"
-                    className="input-field min-h-[120px]"
-                    placeholder="e.g., 'Customer feedback indicates a preference for faster delivery times and more color options for product X.'"
-                    value={inputText}
-                    onChange={(e) => setInputText(e.target.value)}
-                ></textarea>
+        <div className="p-4 md:p-8 space-y-6">
+            <h2 className="text-2xl font-bold text-gray-800">AI/ML Data Analysis</h2>
+            <div className="flex flex-col md:flex-row items-center space-y-4 md:space-y-0 md:space-x-4">
+                <button
+                    onClick={runAnalysis}
+                    disabled={loadingAnalysis || loadingAuth}
+                    className="w-full md:w-auto px-6 py-3 text-lg font-semibold text-white bg-purple-600 rounded-md shadow-md hover:bg-purple-700 disabled:bg-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 transition duration-200"
+                >
+                    {loadingAnalysis ? 'Analyzing...' : 'Run AI Analysis'}
+                </button>
             </div>
-            <button
-                onClick={handleAnalyze}
-                className="w-full bg-green-600 text-white py-3 px-4 rounded-md hover:bg-green-700 transition-colors duration-200 text-lg font-bold shadow-md focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2"
-                disabled={loading} // Disable button while loading
-            >
-                {loading ? <LoadingSpinner /> : 'Analyze Data'}
-            </button>
-            {analysisResult && (
-                <div className="mt-6 p-4 bg-gray-50 rounded-md border border-gray-200">
-                    <h3 className="text-lg font-semibold text-gray-700 mb-2">Analysis Result:</h3>
-                    <p className="text-gray-800 whitespace-pre-wrap">{analysisResult}</p>
-                </div>
+            {message && (
+                <div className="p-4 rounded-lg text-white bg-red-500">{message}</div>
             )}
-            {/* Display messages using the MessageBox component */}
-            <MessageBox message={message} type={messageType} onClose={() => setMessage('')} />
+            <div className="mt-6 p-6 bg-gray-50 rounded-lg shadow-inner min-h-[200px] whitespace-pre-wrap font-mono text-sm text-gray-800">
+                {analysisResult || "Click 'Run AI Analysis' to get insights on your business data."}
+            </div>
         </div>
     );
 };
 
-
-// --- Main App Component ---
+// Main App Component
 const App = () => {
-    const [selectedBranch, setSelectedBranch] = useState(null); // State for the currently selected main branch
-    const [selectedSubBranch, setSelectedSubBranch] = useState(null); // State for the currently selected sub-branch
-    const { auth, currentUser, loadingAuth } = useFirebase(); // Get Firebase auth and user data from context
-    const [currentView, setCurrentView] = useState('home'); // Controls which content is displayed in the right panel ('home', 'dataEntry', 'aiAnalysis')
+    const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+    const [openBranches, setOpenBranches] = useState({ Customers: true });
+    const [selectedBranch, setSelectedBranch] = useState(null);
+    const [selectedSubBranch, setSelectedSubBranch] = useState(null);
+    const [currentView, setCurrentView] = useState('home');
 
-    // Callback function for TreeView to update selected branch/sub-branch and switch view
-    const handleSelectBranch = (branch, subBranch) => {
-        setSelectedBranch(branch);
-        setSelectedSubBranch(subBranch);
-        setCurrentView('dataEntry'); // Switch to data entry view
+    const { userId, loadingAuth } = useFirebase();
+
+    // Data for the treeview
+    const treeData = [
+        {
+            name: 'Customers', icon: Users, subBranches: [
+                { name: 'Add Customer', icon: Plus },
+                { name: 'Change Customer', icon: Edit },
+                { name: 'Delete Customer', icon: Trash2 },
+            ]
+        },
+        {
+            name: 'Vendors', icon: Briefcase, subBranches: [
+                { name: 'Add Vendor', icon: Plus },
+                { name: 'Change Vendor', icon: Edit },
+                { name: 'Delete Vendor', icon: Trash2 },
+            ]
+        },
+        {
+            name: 'Inventory', icon: Warehouse, subBranches: [
+                { name: 'Add Inventory', icon: Plus },
+                { name: 'Change Inventory', icon: Edit },
+                { name: 'Delete Inventory', icon: Trash2 },
+            ]
+        },
+        {
+            name: 'Banking', icon: Banknote, subBranches: [
+                { name: 'Add Transaction', icon: Plus },
+                { name: 'Change Transaction', icon: Edit },
+                { name: 'Delete Transaction', icon: Trash2 },
+            ]
+        },
+        {
+            name: 'Company', icon: Briefcase, subBranches: [
+                { name: 'Add Company Info', icon: Plus },
+                { name: 'Change Company Info', icon: Edit },
+                { name: 'Delete Company Info', icon: Trash2 },
+            ]
+        },
+        {
+            name: 'Employees', icon: Users, subBranches: [
+                { name: 'Add Employee', icon: Plus },
+                { name: 'Change Employee', icon: Edit },
+                { name: 'Delete Employee', icon: Trash2 },
+            ]
+        },
+    ];
+
+    const toggleSidebar = () => {
+        setIsSidebarOpen(!isSidebarOpen);
     };
 
-    // Handles user logout
-    const handleLogout = async () => {
-        if (auth) {
-            try {
-                await signOut(auth); // Sign out the current user
-                console.log("User signed out.");
-            } catch (error) {
-                console.error("Error signing out:", error);
-            }
+    const toggleBranch = (branchName) => {
+        setOpenBranches(prev => ({ ...prev, [branchName]: !prev[branchName] }));
+    };
+
+    const handleSubBranchClick = (branchName, subBranchName) => {
+        setSelectedBranch(branchName);
+        setSelectedSubBranch(subBranchName);
+        setCurrentView('dataEntry');
+        if (window.innerWidth < 768) {
+            setIsSidebarOpen(false);
         }
     };
 
-    // Show a loading screen while authentication is in progress
-    if (loadingAuth) {
+    const renderTreeView = () => {
         return (
-            <div className="min-h-screen flex items-center justify-center bg-gray-100">
-                <LoadingSpinner />
-                <p className="ml-2 text-gray-700">Loading authentication...</p>
-            </div>
+            <nav className="space-y-2">
+                <button
+                    onClick={() => { setCurrentView('home'); setSelectedBranch(null); setSelectedSubBranch(null); }}
+                    className="flex items-center w-full px-4 py-2 text-sm font-medium text-purple-800 bg-purple-100 rounded-lg hover:bg-purple-200 transition duration-150"
+                >
+                    <Home size={18} className="mr-3" />
+                    Home
+                </button>
+                {treeData.map(branch => (
+                    <div key={branch.name}>
+                        <button
+                            onClick={() => toggleBranch(branch.name)}
+                            className="flex items-center justify-between w-full px-4 py-2 text-sm font-medium text-gray-700 rounded-lg hover:bg-gray-100 transition duration-150"
+                        >
+                            <div className="flex items-center">
+                                {React.createElement(branch.icon, { size: 18, className: "mr-3" })}
+                                {branch.name}
+                            </div>
+                            {openBranches[branch.name] ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                        </button>
+                        {openBranches[branch.name] && (
+                            <ul className="pl-8 mt-1 space-y-1">
+                                {branch.subBranches.map(subBranch => (
+                                    <li key={subBranch.name}>
+                                        <button
+                                            onClick={() => handleSubBranchClick(branch.name, subBranch.name)}
+                                            className={`flex items-center w-full p-2 text-sm text-gray-600 rounded-lg hover:bg-gray-200 transition duration-150
+                                            ${selectedBranch === branch.name && selectedSubBranch === subBranch.name ? 'bg-gray-200 font-semibold' : ''}`}
+                                        >
+                                            {React.createElement(subBranch.icon, { size: 16, className: "mr-2" })}
+                                            {subBranch.name}
+                                        </button>
+                                    </li>
+                                ))}
+                            </ul>
+                        )}
+                    </div>
+                ))}
+            </nav>
         );
-    }
+    };
 
     return (
-        // Main container with Inter font and responsive design
-        <div className="min-h-screen bg-gray-100 font-inter antialiased flex flex-col">
-            {/* Header Section */}
-            <header className="bg-gradient-to-r from-blue-600 to-blue-800 text-white p-4 shadow-lg flex justify-between items-center rounded-b-lg">
-                <h1 className="text-3xl font-extrabold tracking-tight">Ignite App</h1>
-                <div className="flex items-center space-x-4">
-                    {/* Display User ID if authenticated */}
-                    {currentUser && (
-                        <span className="text-sm bg-blue-700 px-3 py-1 rounded-full">
-                            User ID: {currentUser.uid}
-                        </span>
-                    )}
-                    {/* Logout Button */}
-                    <button
-                        onClick={handleLogout}
-                        className="bg-white text-blue-800 px-4 py-2 rounded-md font-semibold hover:bg-blue-100 transition-colors duration-200 shadow-md focus:outline-none focus:ring-2 focus:ring-blue-300"
-                    >
-                        Logout
-                    </button>
+        <div className="font-sans antialiased text-gray-900 bg-gray-50 min-h-screen flex flex-col">
+            <style>
+                {`
+                    @import url('https://rsms.me/inter/inter.css');
+                    body { font-family: 'Inter', sans-serif; }
+                `}
+            </style>
+
+            <header className="flex items-center justify-between p-4 bg-white shadow-md z-10 md:hidden">
+                <div className="flex items-center space-x-2">
+                    <img src="https://placehold.co/40x40/6b46c1/ffffff?text=I" alt="Ignite Logo" className="rounded-full" />
+                    <h1 className="text-xl font-bold text-purple-600">Ignite</h1>
                 </div>
+                <button onClick={toggleSidebar} className="p-2 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500">
+                    {isSidebarOpen ? <X size={24} /> : <Menu size={24} />}
+                </button>
             </header>
 
-            {/* Main Content Area - Flexible layout for left and right panels */}
-            <div className="flex flex-1 p-6 space-x-6 flex-col md:flex-row"> {/* Responsive layout: column on small screens, row on medium+ */}
-                {/* Left Panel - Treeview and AI/ML Button */}
-                <div className="w-full md:w-1/4 min-w-[250px] bg-white rounded-xl shadow-lg p-4 flex flex-col mb-6 md:mb-0"> {/* Responsive width and margin */}
-                    <TreeView onSelectBranch={handleSelectBranch} />
-                    <div className="mt-auto pt-4 border-t border-gray-200">
-                        <button
-                            onClick={() => setCurrentView('aiAnalysis')} // Switch to AI/ML analysis view
-                            className="w-full bg-purple-600 text-white py-2.5 px-4 rounded-md hover:bg-purple-700 transition-colors duration-200 text-lg font-bold shadow-md focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2"
-                        >
-                            AI/ML Analysis
-                        </button>
-                    </div>
-                </div>
-
-                {/* Right Panel - Content Display Area */}
-                <div className="flex-1 bg-white rounded-xl shadow-lg p-6 overflow-y-auto">
-                    {/* Conditional rendering based on currentView state */}
-                    {currentView === 'home' && (
-                        <div className="text-center p-10 text-gray-700">
-                            <h2 className="text-3xl font-bold mb-4">Welcome to Ignite!</h2>
-                            <p className="text-lg">Use the navigation tree on the left to manage your business data.</p>
-                            <p className="mt-2 text-md">Click "AI/ML Analysis" to explore data insights.</p>
+            <div className="flex flex-1">
+                {/* Left Panel - Sidebar */}
+                <aside className={`fixed inset-y-0 left-0 z-20 w-64 bg-gray-800 text-gray-50 transform transition-transform duration-300 md:relative md:translate-x-0 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+                    <div className="p-6 h-full flex flex-col">
+                        <div className="flex items-center space-x-3 mb-8">
+                            <img src="https://placehold.co/40x40/6b46c1/ffffff?text=I" alt="Ignite Logo" className="rounded-full" />
+                            <h1 className="text-2xl font-bold text-purple-300">Ignite</h1>
                         </div>
-                    )}
-                    {currentView === 'dataEntry' && (
-                        <DataEntryForm
-                            selectedBranch={selectedBranch}
-                            selectedSubBranch={selectedSubBranch}
-                        />
-                    )}
-                    {currentView === 'aiAnalysis' && (
-                        <AIDataAnalysis />
-                    )}
-                </div>
+                        <div className="flex-1 overflow-y-auto pr-2">
+                            {renderTreeView()}
+                        </div>
+                        <div className="mt-8 pt-4 border-t border-gray-700 space-y-4">
+                            <div className="p-2 text-sm text-gray-400 border-l-4 border-purple-500 bg-gray-700 rounded-r-md">
+                                <p>User ID:</p>
+                                <p className="font-mono text-xs break-all mt-1">{userId}</p>
+                            </div>
+                            <button
+                                onClick={() => { setCurrentView('aiAnalysis'); setIsSidebarOpen(false); }}
+                                className="flex items-center justify-center w-full px-4 py-2 text-sm font-semibold text-white bg-purple-600 rounded-lg shadow-md hover:bg-purple-700 transition duration-150 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2"
+                            >
+                                <Brain size={18} className="mr-2" />
+                                AI/ML Analysis
+                            </button>
+                        </div>
+                    </div>
+                </aside>
+
+                {/* Right Panel - Main Content */}
+                <main className="flex-1 p-4 md:p-8 overflow-auto">
+                    <div className="bg-white rounded-xl shadow-lg h-full p-6">
+                        {loadingAuth ? (
+                            <div className="flex items-center justify-center h-full text-gray-500">
+                                <svg className="animate-spin h-8 w-8 text-purple-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                </svg>
+                                <span className="ml-4 text-xl">Loading Ignite...</span>
+                            </div>
+                        ) : (
+                            <>
+                                {currentView === 'home' && (
+                                    <div className="text-center p-10 text-gray-700">
+                                        <h2 className="text-3xl font-bold mb-4">Welcome to Ignite!</h2>
+                                        <p className="text-lg">Use the navigation tree on the left to manage your business data.</p>
+                                        <p className="mt-2 text-md">Click <span className="font-semibold">"AI/ML Analysis"</span> to explore data insights.</p>
+                                    </div>
+                                )}
+                                {currentView === 'dataEntry' && (
+                                    <DataEntryForm
+                                        selectedBranch={selectedBranch}
+                                        selectedSubBranch={selectedSubBranch}
+                                    />
+                                )}
+                                {currentView === 'aiAnalysis' && (
+                                    <AIDataAnalysis />
+                                )}
+                            </>
+                        )}
+                    </div>
+                </main>
             </div>
         </div>
     );
 };
 
-// Wrap the main App component with FirebaseProvider to ensure Firebase is initialized
-// and available throughout the application.
+// Wrap the App with FirebaseProvider
 const WrappedApp = () => (
-    <FirebaseProvider>
-        <App />
-    </FirebaseProvider>
+    <FirebaseContext.Provider value={{
+        db: null, // Placeholder, will be set in FirebaseProvider
+        auth: null, // Placeholder, will be set in FirebaseProvider
+        currentUser: null, // Placeholder, will be set in FirebaseProvider
+        userId: 'anonymous', // Placeholder, will be updated
+        loadingAuth: true
+    }}>
+        <FirebaseProvider>
+            <App />
+        </FirebaseProvider>
+    </FirebaseContext.Provider>
 );
 
-export default WrappedApp; // Export the wrapped app as the default
-// 
-// This ensures Firebase is initialized and available throughout the app.
-
+export default WrappedApp;
