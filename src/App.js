@@ -20,17 +20,21 @@ import {
     ChevronDown, ChevronRight, Home, Plus, Edit, Trash2, Briefcase, Users, Warehouse, Banknote, Brain, X, Menu, List
 } from 'lucide-react';
 
-import firebaseConfig from './FirebaseConfig'; // ✅ This imports your config safely
+import firebaseConfig from './FirebaseConfig';                     // ✅ This imports your config safely
+import { serverTimestamp, Timestamp } from 'firebase/firestore';   // ✅ Import serverTimestamp for automatic timestamps
 
 
 // Helper function to safely render Firebase values (especially Timestamps)
-const renderValue = (value) => {
+const renderValue = (value, key) => {
     if (value && typeof value === 'object') {
-        // If it's a Firebase Timestamp object, convert it to a readable string
         if (typeof value.toDate === 'function') {
-            return value.toDate().toLocaleString();
+            // ✅ Format differently for hireDate vs other timestamps
+            const dateObj = value.toDate();
+            if (key && key.toLowerCase().includes('hiredate')) {
+                return dateObj.toLocaleDateString(); // only date
+            }
+            return dateObj.toLocaleString(); // date + time
         }
-        // Otherwise, stringify the object
         return JSON.stringify(value);
     }
     // For primitives like string, number, boolean
@@ -41,10 +45,19 @@ const renderValue = (value) => {
 const appId = 'ignite-appv2-data';
 const initialAuthToken = null;
 
+// Sidebar text color (default is too dark for you)
+// Example: '#ffffff' for white, '#f0f0f0' for light gray
+const SIDEBAR_TEXT_COLOR = '#ffffff';
+
+// ✅ Set to true to enable logs globally
 const ENABLE_LOGGING = true;
-const log = (message, ...args) => {
-    if (ENABLE_LOGGING) {
-        console.log(`[LOG] ${message}`, ...args);
+
+// ✅ Only log from these components (leave array empty [] to log all)
+const LOG_COMPONENTS = ['ListDataView', 'DataEntryForm', 'FirebaseProvider'];
+
+const log = (component, message, ...args) => {
+    if (ENABLE_LOGGING && (LOG_COMPONENTS.length === 0 || LOG_COMPONENTS.includes(component))) {
+        console.log(`[${component}] ${message}`, ...args);
     }
 };
 
@@ -52,7 +65,7 @@ const FirebaseContext = createContext(null);
 const useFirebase = () => useContext(FirebaseContext);
 
 const FirebaseProvider = ({ children }) => {
-    log('FirebaseProvider component is rendering.');
+    log('FirebaseProvider`, `component is rendering.');
 
     const [db, setDb] = useState(null);
     const [auth, setAuth] = useState(null);
@@ -60,10 +73,10 @@ const FirebaseProvider = ({ children }) => {
     const [loadingAuth, setLoadingAuth] = useState(true);
 
     useEffect(() => {
-        log('useEffect in FirebaseProvider is running.');
+        log('FirebaseProvider`, `useEffect in FirebaseProvider is running.');
         const initializeFirebase = async () => {
             try {
-                log('Initializing Firebase app...');
+                log('FirebaseProvider`, `Initializing Firebase app...');
                 const app = initializeApp(firebaseConfig);
 
                 const authInstance = getAuth(app);
@@ -71,22 +84,22 @@ const FirebaseProvider = ({ children }) => {
 
                 setAuth(authInstance);
                 setDb(dbInstance);
-                log('Firebase services (Auth, Firestore) have been set.');
+                log('FirebaseProvider`, `Firebase services (Auth, Firestore) have been set.');
 
-                log('Attempting authentication...');
+                log('FirebaseProvider`, `Attempting authentication...');
                 if (initialAuthToken) {
                     await signInWithCustomToken(authInstance, initialAuthToken);
-                    log('Signed in with custom token.');
+                    log('FirebaseProvider`, `Signed in with custom token.');
                 } else {
                     await signInAnonymously(authInstance);
-                    log('Signed in anonymously.');
+                    log('FirebaseProvider`, `Signed in anonymously.');
                 }
 
                 const unsubscribe = onAuthStateChanged(authInstance, (user) => {
-                    log(`Auth state changed. User: ${user ? user.uid : 'null'}`);
+                    log(`FirebaseProvider`, `Auth state changed. User: ${user ? user.uid : 'null'}`);
                     setCurrentUser(user || null);
                     setLoadingAuth(false);
-                    log('Authentication is complete. loadingAuth set to false.');
+                    log('FirebaseProvider`, `Authentication is complete. loadingAuth set to false.');
                 });
 
                 return () => {
@@ -216,11 +229,11 @@ const ListDataView = ({ branch }) => {
     const headers = data.length > 0 ? Object.keys(data[0]).filter(k => k !== 'id') : [];
 
     if (loadingAuth || !db || !userId) {
-        log('ListDataView is rendering the loading message.');
+     //   log('ListDataView', `is rendering the loading message for: ${branch}...');
         return <div className="p-4 text-center text-gray-500">Loading...</div>;
     }
 
-    log('ListDataView is rendering the main table.');
+   // log('ListDataView is rendering the main table.');
     return (
         <div className="p-4">
             <div className="flex items-center justify-between mb-4">
@@ -265,7 +278,7 @@ const ListDataView = ({ branch }) => {
                                                 className="border px-1 rounded"
                                             />
                                         ) : (
-                                            renderValue(item[key])
+                                            renderValue(item[key], key)
                                         )}
                                     </td>
                                 ))}
@@ -361,8 +374,18 @@ const DataEntryForm = ({ selectedBranch, selectedSubBranch }) => {
             const docData = {
                 ...formData,
                 subBranch: selectedSubBranch,
-                timestamp: new Date(),
+                createdAt: serverTimestamp(), // ✅ automatic server date/time
+
+                
             };
+
+        // If hireDate is a date string (from the date picker), convert it to Firestore Timestamp
+            if (formData.hireDate) {
+                docData.hireDate = Timestamp.fromDate(new Date(formData.hireDate));
+            }
+
+            // Add the document to the Firestore collection
+          // log('Adding document to collection: ${collectionPath}`, docData);
 
             await addDoc(collection(db, collectionPath), docData);
 
@@ -400,10 +423,13 @@ const DataEntryForm = ({ selectedBranch, selectedSubBranch }) => {
                             {field.replace(/([A-Z])/g, ' $1').trim()}:
                         </label>
                         <input
-                            type="text"
+                            type={field.toLowerCase().includes('date') ? 'date' : 'text'}  // ✅ date picker for date fields
                             id={field}
                             name={field}
-                            value={formData[field] || ''}
+                            value={
+                                 formData[field] ||
+                                  (field.toLowerCase().includes('date') ? new Date().toISOString().split('T')[0] : '')
+                            }
                             onChange={handleInputChange}
                             required
                             className="mt-1 block w-full px-3 py-2 bg-gray-50 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
@@ -623,7 +649,8 @@ const App = () => {
                     <div key={branch.name}>
                         <button
                             onClick={() => toggleBranch(branch.name)}
-                            className="flex items-center justify-between w-full px-4 py-2 text-sm font-medium text-gray-700 rounded-lg hover:bg-gray-100 transition duration-150"
+                            style={{ color: SIDEBAR_TEXT_COLOR }}
+                            className="flex items-center justify-between w-full px-4 py-2 text-sm font-medium rounded-lg hover:bg-gray-100 transition duration-150"
                         >
                             <div className="flex items-center">
                                 {React.createElement(branch.icon, { size: 18, className: "mr-3" })}
