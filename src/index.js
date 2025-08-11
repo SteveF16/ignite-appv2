@@ -1,13 +1,22 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import './index.css';
-import App from './App';
+
+// STEVE - commented the App startup to wrap it in FirebaseProvider
+import AppWrapper from './AppWrapper';  // Use AppWrapper to provide Firebase context
+//import App from './App';
 import reportWebVitals from './reportWebVitals';
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(
   <React.StrictMode>
-    <App />
+
+
+    <AppWrapper />  {/* STEVE - Use AppWrapper to provide Firebase context */}
+    {/* <App /> */}  {/* STEVE - Uncomment this line if you want to use the App directly without Firebase context */}
+    
+
+
   </React.StrictMode>
 );
 
