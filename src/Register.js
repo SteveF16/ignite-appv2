@@ -1,10 +1,8 @@
-// Register.js
 import React, { useState, useContext } from 'react';
-import { getAuth, createUserWithEmailAndPassword } from 'firebase/auth';
+import { getAuth, createUserWithEmailAndPassword, signOut } from 'firebase/auth';
 import { FirebaseContext } from './AppWrapper';
 import { UserPlus } from 'lucide-react';
-
-import { Link } from 'react-router-dom'; // Steve added for router navigation instead of hardcoded links <a>
+import { Link, useNavigate } from 'react-router-dom';
 
 
 const Register = () => {
@@ -14,6 +12,7 @@ const Register = () => {
     const [confirmPassword, setConfirmPassword] = useState('');
     const [error, setError] = useState(null);
     const [success, setSuccess] = useState(null);
+    const navigate = useNavigate();
 
     const handleRegister = async (e) => {
         e.preventDefault();
@@ -26,8 +25,20 @@ const Register = () => {
         }
 
         try {
+            // ✅ Optional: silently clear any stale session
+            await signOut(auth);
+
+            // ✅ Create a new user account
             await createUserWithEmailAndPassword(auth, email, password);
             setSuccess('Account created successfully! You can now log in.');
+            setTimeout(() => {
+                navigate('/');
+            }, 2000); // Redirect after 2 seconds
+
+            // ✅ Redirect to protected app route
+            navigate('/app');
+            
+
         } catch (err) {
             console.error("Registration error:", err.code, err.message);
             if (err.code === 'auth/email-already-in-use') {
@@ -43,47 +54,29 @@ const Register = () => {
     };
 
     return (
-        <div className="flex items-center justify-center min-h-screen bg-gray-100 p-4">
-            <div className="w-full max-w-md bg-white p-8 rounded-xl shadow-2xl space-y-6 transform transition-all duration-300 hover:scale-105">
-
-                {/* Logo and Title Section */}
-                <div className="flex flex-col items-center space-y-4">
-                    <img
-                        src="https://placehold.co/150x70/2563eb/ffffff?text=Ignite+v2"
-                        alt="Ignite Version 2 Logo"
-                        className="rounded-lg shadow-md"
-                    />
-                    <h1 className="text-3xl font-extrabold text-gray-800 tracking-tight">
-                        Create Your Account
-                    </h1>
-                    <p className="text-gray-500 text-sm">
-                        Sign up to start managing your business data.
-                    </p>
+        <div className="min-h-screen flex items-center justify-center bg-gray-100 p-4">
+            <div className="bg-white p-8 rounded-xl shadow-lg w-full max-w-md space-y-6">
+                <div className="text-center">
+                    <h1 className="text-3xl font-bold text-gray-800">Create an Account</h1>
+                    <p className="mt-2 text-gray-500">Join Ignite today.</p>
                 </div>
 
-                {/* Form Section */}
                 <form onSubmit={handleRegister} className="space-y-4">
                     <div>
-                        <label className="text-sm font-medium text-gray-600 block mb-1">
-                            Email Address
-                        </label>
+                        <label className="block text-sm font-medium text-gray-700">Email Address</label>
                         <input
                             type="email"
-                            placeholder="you@example.com"
                             value={email}
                             onChange={(e) => setEmail(e.target.value)}
                             required
                             className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
                         />
                     </div>
-
+                    
                     <div>
-                        <label className="text-sm font-medium text-gray-600 block mb-1">
-                            Password
-                        </label>
+                        <label className="block text-sm font-medium text-gray-700">Password</label>
                         <input
                             type="password"
-                            placeholder="••••••••"
                             value={password}
                             onChange={(e) => setPassword(e.target.value)}
                             required
@@ -92,12 +85,9 @@ const Register = () => {
                     </div>
 
                     <div>
-                        <label className="text-sm font-medium text-gray-600 block mb-1">
-                            Confirm Password
-                        </label>
+                        <label className="block text-sm font-medium text-gray-700">Confirm Password</label>
                         <input
                             type="password"
-                            placeholder="••••••••"
                             value={confirmPassword}
                             onChange={(e) => setConfirmPassword(e.target.value)}
                             required
@@ -126,10 +116,9 @@ const Register = () => {
                     </button>
                 </form>
 
-                {/* Footer Link */}
                 <div className="text-center text-sm text-gray-500">
                     Already have an account?{' '}
-                    <Link to="/Login" className="text-blue-600 hover:underline">Log in here.</Link>
+                    <Link to="/" className="text-blue-600 hover:underline">Log in here.</Link>
                 </div>
             </div>
         </div>

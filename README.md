@@ -6,96 +6,51 @@ Ignite is an open-source business management tool designed to help users with da
 
 ## Features
 
-* **Data Management:** Easily manage and track data for customers, vendors, and inventory.
-* **Intuitive Navigation:** A sidebar with a a TreeView navigation menu provides quick access to different sections.
-* **AI-Powered Analysis:** A dedicated feature for AI-driven data analysis to provide valuable business insights.
-* **Responsive Design:** A mobile-only header ensures a seamless and user-friendly experience on all devices.
+src/
+├── App.js
+├── AppWrapper.js
+├── DataEntryForm.js
+├── LogoutButton.js
+├── Login.js
+├── Register.js
+├── Sidebar.js
+├── firebaseConfig.js
+└── index.js
+Component Hierarchy
+This shows how your components are nested and what they are responsible for.
 
-## Technologies
+index.js
 
-* **React:** The main front-end library for building the user interface.
-* **Firebase:** Provides backend services, including a context provider for state management.
-* **Create React App:** Used to bootstrap the project.
-* **...** (Add any other libraries you use, e.g., Material-UI, React Router, etc.)
+AppWrapper.js(The main entry point that sets up Firebase and authentication)
 
-## Project Structure
+Login.js(User login page)
 
-This project was bootstrapped with Create React App.
+Register.js(New user registration page)
 
-App (Ignite - Business Management Tool)
-└─── FirebaseProvider (React Context for Firebase)
-     ├─── App (Main Component)
-     │    ├─── Header (Mobile Only)
-     │    ├─── Sidebar
-     │    │    ├─── Navigation Tree (TreeView)
-     │    │    │    ├─── Home Link
-     │    │    │    └─── Data Entry Branches (Customers, Vendors, Inventory, etc.)
-     │    │    │         ├─── List Items Link (NEW)
-     │    │    │         └─── Add/Change/Delete Item Links
-     │    │    └─── User Info & AI Analysis Button
-     │    │
-     │    └─── Main Content Area
-     │         ├─── Conditional Rendering
-     │         │    ├─── IF view is 'home' THEN Welcome Message
-     │         │    ├─── IF view is 'dataEntry' THEN DataEntryForm
-     │         │    ├─── IF view is 'listings' THEN ListingsView (NEW)
-     │         │    └─── IF view is 'aiAnalysis' THEN AIDataAnalysis
-     │         │
-     │         ├─── DataEntryForm Component
-     │         ├─── ListingsView Component (NEW)
-     │         └─── AIDataAnalysis Component
-     │
-     └─── FirebaseContext.Provider
+App.js(The main application after a user logs in)
 
+Sidebar.js(The main navigation menu)
 
-* **`FirebaseProvider`**: The main context provider that handles all Firebase-related logic and state management, making it accessible throughout the app.
-* **`App`**: The main component that manages the overall layout and state of the application.
-* **`Sidebar`**: Contains the main navigation for the application, including the `Navigation Tree` and user information.
-* **`Main Content Area`**: The dynamic section of the app where different views (`home`, `dataEntry`, `listings`, `aiAnalysis`) are rendered based on user interaction.
-* **`DataEntryForm`**: A reusable component for adding and updating data for different branches (Customers, Vendors, etc.).
+LogoutButton.js(A reusable button for logging out)
 
-## Getting Started
+DataEntryForm.js(The form for adding and editing data)
 
-To get a local copy up and running, follow these simple steps.
+File Descriptions
+index.js: The root of your React application. It renders the AppWrapper component.
 
-### Prerequisites
+AppWrapper.js: A high-level component that handles Firebase initialization, user authentication state, and routing. It acts as a wrapper to provide the Firebase context to the rest of your app.
 
-* Node.js (LTS version recommended)
-* npm or yarn
+App.js: The core component that displays the main application interface, including the header, sidebar, and the dynamic content area where forms are rendered.
 
-### Installation
+Sidebar.js: The navigation component that shows the different data branches (e.g., Customers, Employees) and sub-branches.
 
-1.  Clone the repository:
-    ```sh
-    git clone [your-repo-url]
-    ```
-2.  Navigate to the project directory:
-    ```sh
-    cd ignite-app
-    ```
-3.  Install NPM packages:
-    ```sh
-    npm install
-    ```
+DataEntryForm.js: A reusable form component that dynamically generates input fields based on the selected data branch and handles saving data to Firestore.
 
-### Environment Variables
+Login.js: The component for the user sign-in page.
 
-Firebase environment variables can be found in FirebaseConfig.js file.
+Register.js: The component for the new user registration page.
+
+LogoutButton.js: A simple, dedicated component for the logout action.
 
 
-### Running the App
-
-1.  Start the development server:
-    ```sh
-    npm start
-    ```
-2.  Open your browser and navigate to `http://localhost:3000` to view the app.
-
-## License
-
-This project is licensed under the MIT License - see the `LICENSE` file for details.
-
-## Contributing
-
-We welcome contributions! Please feel free to fork the repository and submit a pull request.
 

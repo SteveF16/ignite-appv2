@@ -1,29 +1,33 @@
-import 
-React, { useState, useContext } from 'react';
-import { getAuth, signInWithEmailAndPassword } from 'firebase/auth';
+import React, { useState, useContext } from 'react';
+import { getAuth, signInWithEmailAndPassword, signOut } from 'firebase/auth';
 import { FirebaseContext } from './AppWrapper';
 import { LogIn } from 'lucide-react';
-
-import { Link } from 'react-router-dom'; // Steve added for router navigation instead of hardcoded links <a>
+import { Link, useNavigate } from 'react-router-dom';
 
 const Login = () => {
-    // We get the 'auth' object from our AppWrapper context
     const { auth } = useContext(FirebaseContext);
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [error, setError] = useState(null);
 
-    // This function handles the form submission
+    const navigate = useNavigate();
+
     const handleLogin = async (e) => {
         e.preventDefault();
-        setError(null); // Clear previous errors
+        setError(null);
 
         try {
+            // 🔄 Force a clean login session (silent logout)
+            await signOut(auth);
+            console.error("Forced signoff auth = ", auth);
+
+            // ✅ Proceed with login
             await signInWithEmailAndPassword(auth, email, password);
-            // If successful, the onAuthStateChanged listener in AppWrapper will handle the rest.
+
+            // 🚀 Navigate to app on success
+            navigate('/app');
         } catch (err) {
             console.error("Login error:", err.code, err.message);
-            // Display a user-friendly error message
             if (err.code === 'auth/invalid-email' || err.code === 'auth/user-not-found') {
                 setError('Invalid email or password. Please try again.');
             } else if (err.code === 'auth/wrong-password') {
@@ -35,35 +39,18 @@ const Login = () => {
     };
 
     return (
-        <div className="flex items-center justify-center min-h-screen bg-gray-100 p-4">
-            <div className="w-full max-w-md bg-white p-8 rounded-xl shadow-2xl space-y-6 transform transition-all duration-300 hover:scale-105">
-                
-                {/* Logo and Title Section */}
-                <div className="flex flex-col items-center space-y-4">
-                    {/* Placeholder for "Ignite Version 2" graphic */}
-                    <img
-                        src="https://placehold.co/150x70/2563eb/ffffff?text=Ignite+v2"
-                        alt="Ignite Version 2 Logo"
-                        className="rounded-lg shadow-md"
-                    />
-                    <h1 className="text-3xl font-extrabold text-gray-800 tracking-tight">
-                        Welcome Back!
-                    </h1>
-                    <p className="text-gray-500 text-sm">
-                        Sign in to manage your business data.
-                    </p>
+        <div className="min-h-screen flex items-center justify-center bg-gray-100 p-4">
+            <div className="bg-white p-8 rounded-xl shadow-lg w-full max-w-md space-y-6">
+                <div className="text-center">
+                    <h1 className="text-3xl font-bold text-gray-800">Sign In to Ignite</h1>
+                    <p className="mt-2 text-gray-500">Welcome back!</p>
                 </div>
                 
-                {/* Form Section */}
                 <form onSubmit={handleLogin} className="space-y-4">
-                    {/* Email Input */}
                     <div>
-                        <label className="text-sm font-medium text-gray-600 block mb-1">
-                            Email Address
-                        </label>
+                        <label className="block text-sm font-medium text-gray-700">Email Address</label>
                         <input
                             type="email"
-                            placeholder="you@example.com"
                             value={email}
                             onChange={(e) => setEmail(e.target.value)}
                             required
@@ -71,14 +58,10 @@ const Login = () => {
                         />
                     </div>
                     
-                    {/* Password Input */}
                     <div>
-                        <label className="text-sm font-medium text-gray-600 block mb-1">
-                            Password
-                        </label>
+                        <label className="block text-sm font-medium text-gray-700">Password</label>
                         <input
                             type="password"
-                            placeholder="••••••••"
                             value={password}
                             onChange={(e) => setPassword(e.target.value)}
                             required
@@ -86,14 +69,12 @@ const Login = () => {
                         />
                     </div>
                     
-                    {/* Error Message */}
                     {error && (
                         <div className="bg-red-100 text-red-600 p-3 rounded-lg text-sm text-center">
                             {error}
                         </div>
                     )}
                     
-                    {/* Login Button */}
                     <button
                         type="submit"
                         className="w-full bg-blue-600 text-white p-3 rounded-lg font-semibold text-lg hover:bg-blue-700 transition-colors shadow-lg flex items-center justify-center space-x-2"
@@ -103,7 +84,6 @@ const Login = () => {
                     </button>
                 </form>
                 
-                {/* Footer Link */}
                 <div className="text-center text-sm text-gray-500">
                     Don't have an account? <Link to="/Register" className="text-blue-600 hover:underline">Register here.</Link>
                 </div>

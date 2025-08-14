@@ -4,11 +4,19 @@
 // This component will be used in the AppWrapper to provide a logout functionality.
 
 
-import React, { useContext } from 'react';
-import { FirebaseContext } from './AppWrapper';
+import React from 'react';
+import { LogOut } from 'lucide-react';
 
-export default function LogoutButton() {
-  const { auth } = useContext(FirebaseContext);
+const LogoutButton = ({ onSignOut }) => {
+  return (
+    <button
+      onClick={onSignOut}
+      className="w-full flex items-center px-3 py-2 text-sm font-medium rounded-lg text-red-400 hover:bg-gray-700 transition-colors"
+    >
+      <LogOut size={20} className="mr-3" />
+      Sign Out
+    </button>
+  );
+};
 
-  return <button onClick={() => auth.signOut()}>Logout</button>;
-}
+export default LogoutButton;
