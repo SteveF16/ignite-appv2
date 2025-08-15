@@ -1,9 +1,13 @@
 import React, { useState, useContext } from 'react';
+
+// eslint-disable-next-line no-unused-vars
 import { getAuth, signOut } from 'firebase/auth';
+
 import { FirebaseContext } from './AppWrapper';
 import Sidebar from './Sidebar';
 import DataEntryForm from './DataEntryForm';
 import { List } from 'lucide-react';
+import ListDataView from './ListDataView';
 
 const navigation = [
     {

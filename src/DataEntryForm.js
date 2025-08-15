@@ -1,7 +1,6 @@
-/* global __app_id */
 
-import React, { useState, useEffect, useContext } from 'react';
-import { collection, addDoc, doc, setDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import React, { useState, useEffect, useContext, useMemo } from 'react';
+import { collection, addDoc, doc, updateDoc } from 'firebase/firestore';
 import { FirebaseContext } from './AppWrapper';
 import { X, Save } from 'lucide-react';
 import DatePicker from 'react-datepicker';
@@ -40,34 +39,49 @@ const dataSchemas = {
     },
 };
 
-const DataEntryForm = ({ selectedBranch, selectedSubBranch, initialData, onSave, onCancel }) => {
+const DataEntryForm = ({ selectedBranch, initialData, onSave, onCancel }) => {
     const { db, tenantId } = useContext(FirebaseContext);
     const [formData, setFormData] = useState({});
     const [loading, setLoading] = useState(false);
     const [message, setMessage] = useState('');
 
+    const collectionName = selectedBranch.replace('Change ', '').replace('Add ', '').toLowerCase();
+    const schema = useMemo(
+            () => dataSchemas[collectionName.charAt(0).toUpperCase() + collectionName.slice(1)] || {},
+            [collectionName]
+            );
+    const schemaFields = useMemo(
+            () => Object.keys(schema).map(key => ({ name: key, type: schema[key] })),
+            [schema]
+            );
     useEffect(() => {
-        // Set initial data for editing
         if (initialData) {
-            setFormData(initialData);
+            const initialFormState = {};
+            schemaFields.forEach(field => {
+                if (field.type === 'date' && initialData[field.name]) {
+                    initialFormState[field.name] = initialData[field.name].toDate();
+                } else if (field.type === 'checkbox') {
+                    initialFormState[field.name] = initialData[field.name] || false;
+                } else {
+                    initialFormState[field.name] = initialData[field.name] || '';
+                }
+            });
+            setFormData(initialFormState);
         } else {
-            setFormData({});
+            const initialFormState = {};
+            schemaFields.forEach(field => {
+                initialFormState[field.name] = field.type === 'checkbox' ? false : '';
+            });
+            setFormData(initialFormState);
         }
-    }, [initialData]);
+    }, [initialData, schemaFields]); // now stable due to useMemo
 
-    const handleChange = (e) => {
-        const { name, value, type, checked } = e.target;
-        setFormData((prev) => ({
-            ...prev,
-            [name]: type === 'checkbox' ? checked : value,
-        }));
+    const handleChange = (name, value) => {
+        setFormData(prev => ({ ...prev, [name]: value }));
     };
 
-    const handleDateChange = (date, name) => {
-        setFormData((prev) => ({
-            ...prev,
-            [name]: date,
-        }));
+    const handleCheckboxChange = (name) => {
+        setFormData(prev => ({ ...prev, [name]: !prev[name] }));
     };
 
     const handleSubmit = async (e) => {
@@ -75,92 +89,96 @@ const DataEntryForm = ({ selectedBranch, selectedSubBranch, initialData, onSave,
         setLoading(true);
         setMessage('');
 
-        const isEditMode = !!initialData;
-        const dataToSave = {
-            ...formData,
-            timestamp: serverTimestamp(),
-            // Ensure date fields are stored as Firebase Timestamps
-            ...Object.keys(dataSchemas[selectedBranch] || {}).reduce((acc, key) => {
-                if (dataSchemas[selectedBranch][key] === 'date' && formData[key]) {
-                    acc[key] = new Date(formData[key]);
-                }
-                return acc;
-            }, {}),
-        };
-
-        const collectionName = selectedBranch.toLowerCase();
-        // Define your app ID here or import it from a config file
-        const appId = 'Ignite'; // <-- Replace with your actual app ID
-        const fullPath = `artifacts/${appId}/tenants/${tenantId}/${collectionName}`;
-
         try {
+            const isEditMode = selectedBranch.includes('Change');
+            const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+            const collectionPath = `artifacts/${appId}/tenants/${tenantId}/${collectionName}`;
+            const dataToSave = {
+            ...formData,
+            tenantId,
+            updatedAt: new Date(),
+    };
+
             if (isEditMode) {
-                const docRef = doc(db, fullPath, initialData.id);
-                await updateDoc(docRef, dataToSave);
-                setMessage('Document updated successfully!');
+                if (initialData && initialData.id) {
+                    const docRef = doc(db, collectionPath, initialData.id);
+                    await updateDoc(docRef, dataToSave);
+                    setMessage(`${selectedBranch.replace('Change ', '')} updated successfully!`);
+                }
             } else {
-                const colRef = collection(db, fullPath);
-                await addDoc(colRef, dataToSave);
-                setMessage('Document added successfully!');
+                await addDoc(collection(db, collectionPath), dataToSave);
                 setFormData({});
+                setMessage(`${selectedBranch.replace('Add ', '')} added successfully!`);
             }
+
+            if (isEditMode && onSave) {
+                setTimeout(() => onSave(), 0);
+            }
+
         } catch (error) {
-            console.error('Error writing document: ', error);
-            setMessage('Error saving document.');
+            console.error('Error saving data:', error);
+            setMessage('Failed to save data. Please try again.');
         } finally {
             setLoading(false);
-            if (onSave) onSave();
         }
     };
 
-    const fields = dataSchemas[selectedBranch] || {};
+    const getFormTitle = () => {
+        return selectedBranch;
+    };
 
     return (
-        <div className="max-w-2xl mx-auto p-6 bg-gray-50 rounded-xl shadow-lg">
+        <div className="p-6 bg-white rounded-lg shadow-xl">
+            <h2 className="text-2xl font-bold text-gray-800 mb-6">{getFormTitle()}</h2>
             <form onSubmit={handleSubmit} className="space-y-6">
-                {Object.keys(fields).map((key) => {
-                    const type = fields[key];
-                    const label = key.charAt(0).toUpperCase() + key.slice(1).replace(/([A-Z])/g, ' $1').trim();
-                    const placeholder = `Enter ${label}`;
+                {schemaFields.map(field => {
+                    const { name, type } = field;
+                    const placeholder = name.replace(/([A-Z])/g, ' $1').trim();
+                    const isSelect = type === 'select';
+                    const isCheckbox = type === 'checkbox';
 
                     return (
-                        <div key={key} className="flex flex-col space-y-1">
-                            <label htmlFor={key} className="text-sm font-semibold text-gray-700">{label}</label>
-                            {type === 'date' ? (
-                                <DatePicker
-                                    selected={formData[key] ? new Date(formData[key]) : null}
-                                    onChange={(date) => handleDateChange(date, key)}
-                                    placeholderText={placeholder}
-                                    className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
-                                />
-                            ) : type === 'select' ? (
+                        <div key={name}>
+                            <label htmlFor={name} className="block text-sm font-medium text-gray-700 mb-1">
+                                {placeholder}
+                            </label>
+                            {isSelect ? (
                                 <select
-                                    id={key}
-                                    name={key}
-                                    value={formData[key] || ''}
-                                    onChange={handleChange}
+                                    id={name}
+                                    name={name}
+                                    value={formData[name] || ''}
+                                    onChange={(e) => handleChange(name, e.target.value)}
                                     className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
                                 >
-                                    <option value="">Select a Type</option>
-                                    <option value="income">Income</option>
-                                    <option value="expense">Expense</option>
+                                    <option value="" disabled>Select {placeholder}</option>
+                                    {/* Options are hardcoded here but can be dynamic */}
+                                    {['Income', 'Expense'].map(option => (
+                                        <option key={option} value={option}>{option}</option>
+                                    ))}
                                 </select>
-                            ) : type === 'checkbox' ? (
+                            ) : isCheckbox ? (
                                 <input
-                                    id={key}
-                                    name={key}
                                     type="checkbox"
-                                    checked={!!formData[key]}
-                                    onChange={handleChange}
-                                    className="h-5 w-5 text-blue-600 rounded focus:ring-blue-500 border-gray-300"
+                                    id={name}
+                                    name={name}
+                                    checked={formData[name] || false}
+                                    onChange={() => handleCheckboxChange(name)}
+                                    className="h-5 w-5 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                                />
+                            ) : type === 'date' ? (
+                                <DatePicker
+                                    selected={formData[name] || null}
+                                    onChange={(date) => handleChange(name, date)}
+                                    className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                                    dateFormat="MM/dd/yyyy"
                                 />
                             ) : (
                                 <input
-                                    id={key}
-                                    name={key}
                                     type={type}
-                                    value={formData[key] || ''}
-                                    onChange={handleChange}
+                                    id={name}
+                                    name={name}
+                                    value={formData[name] || ''}
+                                    onChange={(e) => handleChange(name, e.target.value)}
                                     placeholder={placeholder}
                                     required={type !== 'checkbox'}
                                     className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
@@ -192,5 +210,4 @@ const DataEntryForm = ({ selectedBranch, selectedSubBranch, initialData, onSave,
         </div>
     );
 };
-
 export default DataEntryForm;

@@ -3,13 +3,17 @@ import {
     collection,
     onSnapshot,
     query,
-    where,
+    where, // Add this import
     deleteDoc,
     doc
 } from 'firebase/firestore';
 import { FirebaseContext } from './AppWrapper';
 import { Edit, Trash2, Download } from 'lucide-react';
 import DataEntryForm from './DataEntryForm';
+
+//const [editItem, setEditItem] = useState(null);
+//const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+//const [itemToDelete, setItemToDelete] = useState(null);
 
 const renderValue = (value, key) => {
     if (value && typeof value === 'object') {
@@ -33,87 +37,8 @@ const ListDataView = ({ branch }) => {
     const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
     const [itemToDelete, setItemToDelete] = useState(null);
 
-    // --- PASTE THIS NEW CODE HERE ---
-    const handleDownloadCSV = () => {
-        if (data.length === 0) return;
-
-        const headers = Object.keys(data[0]).filter(key => key !== 'id');
-        const csvRows = [
-            headers.join(','),
-            ...data.map(item =>
-                headers.map(header => {
-                    const value = renderValue(item[header]);
-                    const escapedValue = ('' + value).replace(/"/g, '""');
-                    return `"${escapedValue}"`;
-                }).join(',')
-            ),
-        ];
-        
-        const csvString = csvRows.join('\n');
-        const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.setAttribute('href', url);
-        link.setAttribute('download', `${branch.toLowerCase()}-data.csv`);
-        link.style.visibility = 'hidden';
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-    };
-    // --- END OF NEW CODE ---
-
-    
-
-    useEffect(() => {
-        if (!db || !tenantId || !branch) {
-            setLoading(false);
-            return;
-        }
-
-        const collectionPath = branch.replace('List ', '').toLowerCase();
-        const q = query(collection(db, collectionPath), where("tenantId", "==", tenantId));
-
-        const unsubscribe = onSnapshot(q, (querySnapshot) => {
-            const fetchedData = querySnapshot.docs.map(doc => ({
-                id: doc.id,
-                ...doc.data()
-            }));
-            setData(fetchedData);
-            setLoading(false);
-        }, (error) => {
-            console.error("Error fetching data: ", error);
-            setLoading(false);
-        });
-
-        return () => unsubscribe();
-    }, [db, tenantId, branch]);
-
-    const handleDelete = async (item) => {
-        setIsDeleteModalOpen(true);
-        setItemToDelete(item);
-    };
-
-    const confirmDelete = async () => {
-        if (itemToDelete) {
-            try {
-                const collectionPath = branch.replace('List ', '').toLowerCase();
-                await deleteDoc(doc(db, collectionPath, itemToDelete.id));
-                console.log("Document successfully deleted!");
-            } catch (error) {
-                console.error("Error removing document: ", error);
-            } finally {
-                setIsDeleteModalOpen(false);
-                setItemToDelete(null);
-            }
-        }
-    };
-
-    const cancelDelete = () => {
-        setIsDeleteModalOpen(false);
-        setItemToDelete(null);
-    };
-
-    const downloadCsv = () => {
+    // Download CSV function is added here
+const handleDownloadCSV = () => {
         if (data.length === 0) return;
 
         const headers = Object.keys(data[0]).filter(key => key !== 'id' && key !== 'tenantId');
@@ -136,76 +61,148 @@ const ListDataView = ({ branch }) => {
             document.body.removeChild(link);
         }
     };
+    // --- END OF Download CSV function
 
-    if (loading) {
-        return <div className="text-center py-10">Loading data...</div>;
+    
+
+    useEffect(() => {
+        if (!db || !tenantId || !branch) {
+            setLoading(false);
+            return;
+        }
+
+        // Construct the full path according to your security rules
+        const collectionPath = `artifacts/${typeof __app_id !== 'undefined' ? __app_id : 'default-app-id'            
+        }/tenants/${tenantId}/${branch.replace('List ', '').toLowerCase()}`;
+        const q = query(collection(db, collectionPath), where("tenantId", "==", tenantId));
+
+        const unsubscribe = onSnapshot(q, (querySnapshot) => {
+            const fetchedData = querySnapshot.docs.map(doc => ({
+                id: doc.id,
+                ...doc.data()
+            }));
+            setData(fetchedData);
+            setLoading(false);
+        }, (error) => {
+            console.error("Error fetching data: ", error);
+            setLoading(false);
+        });
+
+        return () => unsubscribe();
+    }, [db, tenantId, branch]);
+
+
+
+const handleEdit = (item) => {
+        setEditItem(item);
+    };
+
+    const handleDelete = (item) => {
+        setItemToDelete(item);
+        setIsDeleteModalOpen(true);
+    };
+
+    const confirmDelete = async () => {
+        if (!itemToDelete || !db || !tenantId) return;
+        try {
+            const collectionName = branch.replace('List ', '').toLowerCase();
+            const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+            const docRef = doc(db, `artifacts/${appId}/tenants/${tenantId}/${collectionName}`, itemToDelete.id);
+            await deleteDoc(docRef);
+            setIsDeleteModalOpen(false);
+            setItemToDelete(null);
+        } catch (error) {
+            console.error('Error removing document: ', error);
+        }
+    };
+
+    const cancelDelete = () => {
+        setIsDeleteModalOpen(false);
+        setItemToDelete(null);
+    };
+
+    const handleEditSave = () => {
+        setEditItem(null);
+    };    
+    
+
+if (loading) {
+        return <div className="text-center py-8">Loading...</div>;
     }
 
     if (editItem) {
-        return <DataEntryForm
-            selectedBranch={branch}
-            selectedSubBranch={branch}
-            initialData={editItem}
-            onSave={() => setEditItem(null)}
-            onCancel={() => setEditItem(null)}
-        />
+        return (
+            <DataEntryForm
+                selectedBranch={branch.replace('List ', 'Change ')}
+                initialData={editItem}
+                onSave={handleEditSave}
+                onCancel={() => setEditItem(null)}
+            />
+        );
     }
 
     if (data.length === 0) {
-        return <div className="text-center py-10 text-gray-500">No data found.</div>;
+        return (
+            <div className="text-center py-8 text-gray-500">
+                <p>No data found for {branch.replace('List ', '')}.</p>
+                <p>Add new records using the {`Add ${branch.replace('List ', '')}`} option in the sidebar.</p>
+            </div>
+        );
     }
 
+    // Determine the headers dynamically from the first item
+    const headers = data.length > 0 ? Object.keys(data[0]).filter(key => key !== 'id' && key !== 'tenantId') : [];
+
     return (
-        <div className="bg-white p-8 rounded-xl shadow-lg border border-gray-200">
+        <div className="p-6 bg-white rounded-lg shadow-xl">
             <div className="flex justify-between items-center mb-6">
-                <h2 className="text-2xl font-bold text-gray-800">{branch} Records</h2>
+                <h2 className="text-2xl font-bold text-gray-800">{branch.replace('List ', '')} Records</h2>
                 <button
-                    onClick={downloadCsv}
+                    onClick={handleDownloadCSV}
                     className="flex items-center space-x-2 px-4 py-2 bg-green-500 text-white rounded-lg font-semibold hover:bg-green-600 transition-colors shadow-md"
                 >
                     <Download size={20} />
                     <span>Download CSV</span>
                 </button>
             </div>
-            <div className="overflow-x-auto rounded-lg shadow-md">
+            <div className="overflow-x-auto rounded-lg shadow-sm border border-gray-200">
                 <table className="min-w-full divide-y divide-gray-200">
                     <thead className="bg-gray-50">
                         <tr>
-                            {Object.keys(data[0]).filter(key => key !== 'id' && key !== 'tenantId').map((key) => (
+                            {headers.map(header => (
                                 <th
-                                    key={key}
+                                    key={header}
                                     scope="col"
                                     className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
                                 >
-                                    {key.charAt(0).toUpperCase() + key.slice(1).replace(/([A-Z])/g, ' $1')}
+                                    {header.replace(/([A-Z])/g, ' $1').trim()}
                                 </th>
                             ))}
-                            <th scope="col" className="relative px-6 py-3">
-                                <span className="sr-only">Actions</span>
+                            <th scope="col" className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                Actions
                             </th>
                         </tr>
                     </thead>
                     <tbody className="bg-white divide-y divide-gray-200">
-                        {data.map((item, index) => (
-                            <tr key={index}>
-                                {Object.keys(item).filter(key => key !== 'id' && key !== 'tenantId').map((key) => (
-                                    <td key={key} className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                                        {renderValue(item[key], key)}
+                        {data.map((item) => (
+                            <tr key={item.id} className="hover:bg-gray-100 transition-colors">
+                                {headers.map((header) => (
+                                    <td
+                                        key={header}
+                                        className="px-6 py-4 whitespace-nowrap text-sm text-gray-800"
+                                    >
+                                        {renderValue(item[header], header)}
                                     </td>
                                 ))}
                                 <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                                    <button
-                                        onClick={() => setEditItem(item)}
-                                        className="text-indigo-600 hover:text-indigo-900 mr-4"
-                                    >
-                                        <Edit size={20} />
-                                    </button>
-                                    <button
-                                        onClick={() => handleDelete(item)}
-                                        className="text-red-600 hover:text-red-900"
-                                    >
-                                        <Trash2 size={20} />
-                                    </button>
+                                    <div className="flex justify-center space-x-2">
+                                        <button onClick={() => handleEdit(item)} className="text-indigo-600 hover:text-indigo-900 transition-colors">
+                                            <Edit size={20} />
+                                        </button>
+                                        <button onClick={() => handleDelete(item)} className="text-red-600 hover:text-red-900 transition-colors">
+                                            <Trash2 size={20} />
+                                        </button>
+                                    </div>
                                 </td>
                             </tr>
                         ))}
@@ -213,6 +210,7 @@ const ListDataView = ({ branch }) => {
                 </table>
             </div>
 
+            {/* This delete confirmation modal is new */}
             {isDeleteModalOpen && (
                 <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50 flex items-center justify-center">
                     <div className="relative p-8 bg-white w-96 rounded-lg shadow-xl">
