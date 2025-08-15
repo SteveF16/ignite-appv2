@@ -1,15 +1,17 @@
 import React, { useState, useContext } from 'react';
-import { getAuth, createUserWithEmailAndPassword, signOut } from 'firebase/auth';
+import { createUserWithEmailAndPassword, signOut } from 'firebase/auth';
 import { FirebaseContext } from './AppWrapper';
 import { UserPlus } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
-
+import { doc, setDoc } from 'firebase/firestore';
+import { v4 as uuidv4 } from 'uuid';
 
 const Register = () => {
-    const { auth } = useContext(FirebaseContext);
+    const { auth, db } = useContext(FirebaseContext);
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
+    const [inviteCode, setInviteCode] = useState(''); // NEW (optional)
     const [error, setError] = useState(null);
     const [success, setSuccess] = useState(null);
     const navigate = useNavigate();
@@ -29,14 +31,20 @@ const Register = () => {
             await signOut(auth);
 
             // ✅ Create a new user account
-            await createUserWithEmailAndPassword(auth, email, password);
-            setSuccess('Account created successfully! You can now log in.');
-            setTimeout(() => {
-                navigate('/');
-            }, 2000); // Redirect after 2 seconds
+            const cred = await createUserWithEmailAndPassword(auth, email, password);
+            const user = cred.user;
 
-            // ✅ Redirect to protected app route
-            navigate('/app');
+             // ✅ Join existing tenant if inviteCode provided; otherwise create a new tenant
+             const tenantId = inviteCode.trim() ? inviteCode.trim() : uuidv4();
+             await setDoc(doc(db, 'users', user.uid), {
+               tenantId,
+               email: user.email || email,
+               createdAt: new Date(),
+             });
+
+             setSuccess('Account created successfully!');
+             // Already signed in; go straight to the app
+             navigate('/app');
             
 
         } catch (err) {
@@ -93,6 +101,18 @@ const Register = () => {
                             required
                             className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
                         />
+                    </div>
+
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700">Invite Code (optional)</label>
+                        <input
+                        type="text"
+                        value={inviteCode}
+                        onChange={(e) => setInviteCode(e.target.value)}
+                        placeholder="Enter company code to join an existing tenant"
+                        className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                        />
+                        <p className="text-xs text-gray-500 mt-1">Leave blank to create a new company.</p>
                     </div>
 
                     {error && (

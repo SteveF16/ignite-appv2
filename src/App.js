@@ -7,6 +7,7 @@ import { FirebaseContext } from './AppWrapper';
 import Sidebar from './Sidebar';
 import DataEntryForm from './DataEntryForm';
 import { List } from 'lucide-react';
+import { Clipboard } from 'lucide-react';
 import ListDataView from './ListDataView';
 
 const navigation = [
@@ -22,7 +23,7 @@ const navigation = [
 ];
 
 const App = () => {
-    const { auth, user } = useContext(FirebaseContext);
+    const { auth, user, tenantId } = useContext(FirebaseContext);
     const [sidebarOpen, setSidebarOpen] = useState(false);
     const [selectedBranch, setSelectedBranch] = useState('Customers');
     const [selectedSubBranch, setSelectedSubBranch] = useState('Add Customer');
@@ -67,6 +68,21 @@ const App = () => {
                     <h1 className="text-2xl font-bold">Ignite App</h1>
                     <div className="flex items-center space-x-4">
                         <span className="text-sm">Logged in as: {user?.email}</span>
+                        {/* Display Tenant ID if available */}
+                        {/* Copy Company Code Button */}
+                        {tenantId && (
+                        <button
+                            onClick={() => {
+                            navigator.clipboard.writeText(tenantId);
+                            alert('Company code copied to clipboard!');
+                            }}
+                            className="flex items-center space-x-1 px-3 py-2 bg-gray-100 text-gray-800 rounded-lg font-medium hover:bg-gray-200 transition-colors"
+                        >
+                            <Clipboard size={16} />
+                            <span>Copy Company Code</span>
+                        </button>
+                        )}
+                        {/* Logout Button */}   
                         <button onClick={handleSignOut} className="p-2 bg-red-500 rounded-lg font-semibold hover:bg-red-600 transition-colors">
                             Logout
                         </button>
