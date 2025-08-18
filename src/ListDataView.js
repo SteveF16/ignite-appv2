@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useContext } from 'react';
+import React, { useState, useEffect, useContext, useCallback } from 'react';
 import {
     collection,
     onSnapshot,
@@ -10,58 +10,162 @@ import {
 import { FirebaseContext } from './AppWrapper';
 import { Edit, Trash2, Download } from 'lucide-react';
 import DataEntryForm from './DataEntryForm';
+import { CollectionSchemas } from './DataSchemas';
 
-//const [editItem, setEditItem] = useState(null);
-//const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
-//const [itemToDelete, setItemToDelete] = useState(null);
 
+// ---------------------------------------------------------------------------
+// Render helpers
+//  - Pretty prints Firestore Timestamps
+//  - Truncates long cells with a tooltip (title attr)
+//  - Formats known nested shapes (e.g., Customers.contacts.primary)
+// ---------------------------------------------------------------------------
 const renderValue = (value, key) => {
-    if (value && typeof value === 'object') {
-        if (typeof value.toDate === 'function') {
-            const dateObj = value.toDate();
-            if (key && key.toLowerCase().includes('date')) {
-                return dateObj.toLocaleDateString();
-            }
-            return dateObj.toLocaleString();
-        }
-        return JSON.stringify(value);
+  if (value && typeof value === 'object') {
+    // Firestore Timestamp -> Date string
+    if (typeof value.toDate === 'function') {
+      const dateObj = value.toDate();
+      return dateObj.toLocaleString();
     }
-    return value;
+    // Known nested: Customers.contacts.primary -> "First Last (email, phone)"
+    if (key === 'primaryContact' && value) {
+      const first = value.firstName || '';
+      const last = value.lastName || '';
+      const email = value.email || '';
+      const phone = value.phone || '';
+      return `${[first, last].filter(Boolean).join(' ')}${email || phone ? ' (' : ''}${[email, phone].filter(Boolean).join(', ')}${email || phone ? ')' : ''}`;
+    }
+    // Generic nested object → compact JSON
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
+  }
+  return value !== undefined && value !== null ? String(value) : '';
 };
 
+
 const ListDataView = ({ branch }) => {
-    const { db, tenantId } = useContext(FirebaseContext);
-    const [data, setData] = useState([]);
-    const [loading, setLoading] = useState(true);
-    const [editItem, setEditItem] = useState(null);
-    const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
-    const [itemToDelete, setItemToDelete] = useState(null);
+const { db, tenantId } = useContext(FirebaseContext);
+const [data, setData] = useState([]);          // raw firestore rows
+const [viewData, setViewData] = useState([]);  // shaped rows for table/CSV
+const [loading, setLoading] = useState(true);
+const [editItem, setEditItem] = useState(null);
+const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+const [itemToDelete, setItemToDelete] = useState(null);
 
-    // Download CSV function is added here
-const handleDownloadCSV = () => {
-        if (data.length === 0) return;
+// Download CSV function is added here
+// ── Column visibility & order (simple UX for step 1; drag/drop can come later)
+const [columns, setColumns] = useState([]); // [{ key, visible }]
+//const [expandedRowId, setExpandedRowId] = useState(null); // detail expander per row
+ 
+    // Flatten/derive row values for list readability.
+    // NOTE: We purposely avoid leaking sensitive fields here (see schema.excludes).
+    const shapeForList = useCallback((rawRows) => {
+    const collectionName = branch.replace('List ', '');
+    const colSchema = CollectionSchemas?.[collectionName];
+    const exclude = new Set(colSchema?.list?.exclude || []);
+    if (!rawRows?.length) return [];
 
-        const headers = Object.keys(data[0]).filter(key => key !== 'id' && key !== 'tenantId');
-        const csvRows = data.map(row => {
-            return headers.map(header => {
-                const value = renderValue(row[header], header);
-                return `"${String(value).replace(/"/g, '""')}"`;
-            }).join(',');
+    // Customers: derive readable fields from nested objects
+    if (collectionName === 'Customers') {
+    return rawRows.map((row) => {
+        const shaped = {
+        id: row.id,
+        customerNbr: row.customerNbr,
+        name1: row.name1,
+        name2: row.name2,
+        name3: row.name3,
+        status: row.status,
+        // Primary contact rendered separately via renderValue("primaryContact")
+        primaryContact: row.contacts?.primary || null,
+        // Billing address (1-liner)
+        billingAddress: [
+            row.billing?.address?.line1,
+            row.billing?.address?.line2,
+            row.billing?.address?.city,
+            row.billing?.address?.state,
+            row.billing?.address?.postalCode,
+            row.billing?.address?.country
+        ].filter(Boolean).join(', '),
+        // Credit controls
+        creditLimit: row.billing?.creditLimit ?? '',
+        onCreditHold: row.billing?.onCreditHold ? 'Yes' : 'No',
+        paymentTerms: row.billing?.paymentTerms ?? '',
+        // Timestamps
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt,
+        };
+        // Remove excluded keys defensively
+        for (const k of exclude) delete shaped[k];
+        return shaped;
+    });
+    }
+    // Default: shallow copy and drop excluded keys
+    return rawRows.map((row) => {
+    const shaped = { ...row };
+    for (const k of exclude) delete shaped[k];
+    return shaped;
+    });
+}, [branch]);
+
+
+const deriveColumns = (rows) => {
+    if (!rows.length) return [];
+    // Hide metadata; the shaper already removed sensitive/audit fields
+    const keys = Object.keys(rows[0]).filter(k => k !== 'id' && k !== 'tenantId');
+    return keys.map((k) => ({ key: k, visible: true }));
+};
+
+
+useEffect(() => {
+        // Whenever data changes, shape rows for display and recompute columns
+        const shaped = shapeForList(data);
+        setViewData(shaped); // keep raw data separate to avoid loops
+        setColumns((prev) => {
+          const next = deriveColumns(shaped);
+          if (!prev.length) return next;
+          const asMap = new Map(prev.map(c => [c.key, c]));
+          return next.map(c => asMap.get(c.key) || c);
         });
+}, [data, shapeForList]);
 
-        const csvContent = [headers.join(','), ...csvRows].join('\n');
-        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-        const link = document.createElement('a');
-        if (link.download !== undefined) {
-            const url = URL.createObjectURL(blob);
-            link.setAttribute('href', url);
-            link.setAttribute('download', `${branch.replace('List ', '')}_data.csv`);
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-        }
-    };
-    // --- END OF Download CSV function
+// Download CSV respects current column visibility
+const handleDownloadCSV = () => {
+    if (viewData.length === 0) return;
+
+
+    const collectionName = branch.replace('List ', '');
+    const colSchema = CollectionSchemas?.[collectionName];
+    const excludeCsv = new Set(colSchema?.csv?.exclude || []);
+    const headers = columns
+        .filter(c => c.visible && !excludeCsv.has(c.key))
+        .map(c => c.key);
+
+    const csvRows = viewData.map(row => {
+        return headers.map(header => {
+            const value = renderValue(row[header], header);
+            return `"${String(value).replace(/"/g, '""')}"`;   // Escape quotes
+        }).join(',');
+    });
+
+    
+    // Prepend headers
+    const csvContent = [headers.join(','), ...csvRows].join('\n');
+
+    // Create and trigger download
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    if (link.download !== undefined) {
+        const url = URL.createObjectURL(blob);
+        link.setAttribute('href', url);
+        link.setAttribute('download', `${branch.replace('List ', '')}_data.csv`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    }
+};
+// --- END OF Download CSV function
 
     
 
@@ -133,7 +237,7 @@ if (loading) {
     if (editItem) {
         return (
             <DataEntryForm
-                selectedBranch={branch.replace('List ', 'Change ')}
+                selectedBranch={`Change ${branch}`}
                 initialData={editItem}
                 onSave={handleEditSave}
                 onCancel={() => setEditItem(null)}
@@ -141,7 +245,7 @@ if (loading) {
         );
     }
 
-    if (data.length === 0) {
+    if (viewData.length === 0) {
         return (
             <div className="text-center py-8 text-gray-500">
                 <p>No data found for {branch.replace('List ', '')}.</p>
@@ -151,7 +255,7 @@ if (loading) {
     }
 
     // Determine the headers dynamically from the first item
-    const headers = data.length > 0 ? Object.keys(data[0]).filter(key => key !== 'id' && key !== 'tenantId') : [];
+    const headers = viewData.length > 0 ? Object.keys(viewData[0]).filter(key => key !== 'id' && key !== 'tenantId') : [];
 
     return (
         <div className="p-6 bg-white rounded-lg shadow-xl">
@@ -184,7 +288,7 @@ if (loading) {
                         </tr>
                     </thead>
                     <tbody className="bg-white divide-y divide-gray-200">
-                        {data.map((item) => (
+                        {viewData.map((item) => (
                             <tr key={item.id} className="hover:bg-gray-100 transition-colors">
                                 {headers.map((header) => (
                                     <td
