@@ -62,9 +62,16 @@ const App = () => {
                 navigation={navigation}
             />
 
+            {/* Content column (single wrapper) */}
             <div className="flex-1 flex flex-col lg:ml-64">
-                {/* Header (Top Bar) */}
-                <header className="flex items-center justify-between p-4 bg-blue-600 text-white shadow-md z-40">
+                <header
+                  className="sticky top-0 z-40 flex items-center justify-between p-4 bg-blue-600 text-white shadow-md"
+                >{/* ^ sticky header keeps the app title visible while scrolling */}
+
+
+
+
+   
                     <h1 className="text-2xl font-bold">Ignite App</h1>
                     <div className="flex items-center space-x-4">
                         <span className="text-sm">Logged in as: {user?.email}</span>
@@ -90,7 +97,9 @@ const App = () => {
                 </header>
 
                 {/* Main Content Area */}
-                <main className="flex-1 p-6 overflow-y-auto">
+                <main className="flex-1 p-6 overflow-y-auto overflow-x-auto">
+                    {/* ^ allow horizontal scroll in content only; sidebar/title stay fixed */}
+
                     <h2 className="text-3xl font-bold text-gray-800 mb-6">
                         {selectedBranch} {' > '} {selectedSubBranch}
                     </h2>

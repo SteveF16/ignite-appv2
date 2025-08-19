@@ -1,0 +1,5 @@
+--- a/src/ListDataView.js
++++ b/src/ListDataView.js
+@@ -23,7 +23,6 @@
+- const toCsvCell = (val, key) => {
++ const toCsvCell = (val) => {

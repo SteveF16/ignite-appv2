@@ -36,3 +36,15 @@
     transform: rotate(360deg);
   }
 }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Sticky table header helper (works with Tailwind utilities used in the grid)
+   ────────────────────────────────────────────────────────────────────────── */
+.table-sticky thead th {
+  position: sticky;
+  top: 0; /* stick to the top of the scroll container */
+  z-index: 10; /* above table rows */
+}
+.table-sticky thead {
+  background-color: #f3f4f6; /* Tailwind gray-100 to blend with header row */
+}
