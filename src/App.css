@@ -48,3 +48,19 @@
 .table-sticky thead {
   background-color: #f3f4f6; /* Tailwind gray-100 to blend with header row */
 }
+
+
+
+/* Prevent page-level horizontal scroll; only inner content should scroll horizontally */
+html,
+body,
+#root {
+  height: 100%;
+}
+
+/* ensure full-height layout roots */
+body {
+  overflow-x: hidden;
+}
+
+/* stop body from sliding left/right (keeps header visually fixed) */

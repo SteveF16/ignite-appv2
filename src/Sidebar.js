@@ -1,6 +1,16 @@
-import React, { useState } from 'react';
-import { ChevronDown, ChevronRight, Home, Briefcase, Users, Warehouse, Banknote, Brain, X, List, User, Package, DollarSign, Building } from 'lucide-react';
-import LogoutButton from './LogoutButton';
+ import React, { useState } from 'react';
+ // Import only the icons actually used in this file to satisfy eslint(no-unused-vars)
+ import {
+   ChevronDown,
+   ChevronRight,
+   Home,
+   Briefcase,
+   Users,
+   Warehouse,
+   Banknote,
+   X,
+   User,
+ } from 'lucide-react';import LogoutButton from './LogoutButton';
 
 const iconMap = {
     'Business': Briefcase,
@@ -24,11 +34,13 @@ const Sidebar = ({ sidebarOpen, setSidebarOpen, onNavigationClick, onSignOut, se
     const isBranchExpanded = (branchName) => expandedBranches.includes(branchName);
 
     return (
-        <div
-            className={`fixed inset-y-0 left-0 z-40 w-64 bg-gray-800 text-white p-4 overflow-y-auto transition-transform duration-300 ease-in-out lg:translate-x-0 ${
-                sidebarOpen ? 'translate-x-0' : '-translate-x-full'
-            } shadow-lg`}
-        >
+
+          <div className={`fixed inset-y-0 left-0 z-50 w-64 bg-gray-800 text-white p-4 
+            overflow-y-auto transition-transform duration-300 ease-in-out lg:translate-x-0 
+            ${ sidebarOpen ? 'translate-x-0' : '-translate-x-full' } shadow-lg`}>
+
+
+
             <div className="flex items-center justify-between mb-6">
                 <div className="text-2xl font-bold flex items-center space-x-2">
                     <img src="https://placehold.co/32x32/1d4ed8/FFFFFF?text=I" alt="Ignite logo" className="rounded" />
