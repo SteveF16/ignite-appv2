@@ -64,3 +64,14 @@ body {
 }
 
 /* stop body from sliding left/right (keeps header visually fixed) */
+
+
+/* === Reusable styling for immutable/read-only fields & audit panel === */
+.readonly-field {
+  background-color: #f3f4f6;
+  /* subtle gray */
+  color: #6b7280;
+  /* muted text (Tailwind gray-500) */
+  cursor: not-allowed;
+  
+}

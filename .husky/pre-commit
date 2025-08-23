@@ -1,0 +1,13 @@
+
+#*** Add File: .husky/pre-commit
+#!/usr/bin/env sh
+# Husky v9+ simple hook (no husky.sh sourcing)
+
+# Block commit if protected files drift from snapshot
+npm run guard:verify || exit 1
+
+# Keep code quality consistent
+npm run lint || exit 1
+
+# (optional) Add tests/typecheck here later
+# ---- End of pre-commit checks ----

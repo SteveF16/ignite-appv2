@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useContext, useMemo } from 'react';
-import { collection, addDoc, doc, updateDoc } from 'firebase/firestore';
+import { collection, addDoc, doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { FirebaseContext } from './AppWrapper';
 import { X, Save } from 'lucide-react';
 import DatePicker from 'react-datepicker';
@@ -45,7 +45,7 @@ const flattenSchema = (schema) => (schema?.fields ?? []).map(f => ({
 // ─────────────────────────────────────────────────────────────────────────────@@
 
 const DataEntryForm = ({ selectedBranch, initialData, onSave, onCancel }) => {
-    const { db, tenantId } = useContext(FirebaseContext);
+    const { db, tenantId, user  } = useContext(FirebaseContext); // add user for audit stamping
     const [formData, setFormData] = useState({});
     const [loading, setLoading] = useState(false);
     const [message, setMessage] = useState('');
@@ -134,31 +134,59 @@ const DataEntryForm = ({ selectedBranch, initialData, onSave, onCancel }) => {
             if (DEBUG_FIRESTORE) {
               console.log('[DataEntryForm] collectionPath:', collectionPath); // <-- helps you locate the document in Firestore
             }            
+
             // Encrypt any sensitive fields before save (stubbed)
             const secured = await encryptIfSensitive(formData);
-            const dataToSave = {
-                ...secured,
-                tenantId,
-                updatedAt: new Date(),
-            };
+
+            // Strip client-provided audit/tenant fields (defense in depth)                           // inline-review
+            const clean = { ...secured };
+            delete clean.createdAt; delete clean.createdBy; delete clean.updatedAt; delete clean.updatedBy;
+            delete clean.tenantId;  delete clean.appId;
+
+            // Server clock  actor for audit                                                         // inline-review
+            const now = serverTimestamp();
+            const actor = user?.email || user?.uid || "unknown";
 
             if (isEditMode) {
                 if (initialData && initialData.id) {
                     const docRef = doc(db, collectionPath, initialData.id);
-                    await updateDoc(docRef, dataToSave);
+                    const updatePayload = {
+                        ...clean,
+                        tenantId,
+                        ...(appId ? { appId } : {}),
+                        updatedAt: now,
+                        updatedBy: actor,
+                    };
+                    await updateDoc(docRef, updatePayload);
                     if (DEBUG_FIRESTORE) {
                         console.log('[DataEntryForm] updated doc id:', initialData.id);
                     }
                     setMessage(`${selectedBranch.replace('Change ', '')} updated successfully! (id: ${initialData.id})`);
                 }
             } else {
-                    const docRef = await addDoc(collection(db, collectionPath), dataToSave);
+                    const createPayload = {
+                        ...clean,
+                        tenantId,
+                        ...(appId ? { appId } : {}),
+                        createdAt: now,
+                        createdBy: actor,
+                        updatedAt: now,
+                        updatedBy: actor,
+                    };
+                    const docRef = await addDoc(collection(db, collectionPath), createPayload);
                     if (DEBUG_FIRESTORE) {
                         console.log('[DataEntryForm] created doc id:', docRef.id);
                     }
                     setFormData({});
                     setMessage(`${selectedBranch.replace('Add ', '')} added successfully! (id: ${docRef.id})\nPath: ${collectionPath}`);
-            }
+            }            
+
+
+
+
+
+
+
 
             if (isEditMode && onSave) {
                 setTimeout(() => onSave(), 0);

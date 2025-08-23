@@ -1,151 +1,200 @@
 # Ignite App v2
+<!-- inline-review: Promote the actual app name/version; remove CRA boilerplate -->
 
-Ignite App v2 is a secure, multi-tenant React + Firebase application with Firestore as its backend.  
-The app supports authentication, structured data schemas, role-based access, CSV export, and responsive UI with a persistent sidebar.
+[![Entity UI Guard](https://github.com/SteveF16/ignite-appv2/actions/workflows/entity-verify.yml/badge.svg)](https://github.com/SteveF16/ignite-appv2/actions/workflows/entity-verify.yml)
+<!-- inline-review: CI badge surfaces the Customers UI guardrail status -->
 
----
-
-## 🚀 Features
-
-- **Authentication**
-  - Firebase Authentication
-  - Register, Login, and Logout flows
-  - Multi-tenant security patterns
-
-- **Data Management**
-  - Firestore collections defined in `DataSchemas.js`
-  - Dynamic Data Entry form (`DataEntryForm.js`)
-  - List view with expandable rows and CSV export (`ListDataView.js`)
-
-- **UI/UX**
-  - Responsive sidebar navigation (`Sidebar.js`)
-  - Sticky sidebar and table headers (best practice for large datasets)
-  - Improved data formatting and readability
-  - Tailwind CSS styling
-  - Custom CSS overrides (`App.css`, `Sidebar.css`, `index.css`)
-
-- **Developer Tools**
-  - Patch verification with `scripts/patch-verify.js`
-  - Testing with Jest (`setupTests.js`)
-  - Performance metrics via `reportWebVitals.js`
+Ignite is an open-source business management tool built with **React** and **Firebase/Firestore** for managing customers, employees, vendors, assets, inventory, and transactions.
+<!-- inline-review: Expanded overview to reflect multi-entity scope -->
 
 ---
 
-## 📂 Project Structure
-
-ignite-appv2/
-├── scripts/
-│ └── patch-verify.js # Script to verify applied patches
-├── src/
-│ ├── App.js # Main app container
-│ ├── App.css # Global styles
-│ ├── AppWrapper.js # Provides context wrappers
-│ ├── DataSchemas.js # Firestore schemas (Customers + future tables)
-│ ├── DataEntryForm.js # Dynamic form for adding/editing records
-│ ├── ListDataView.js # List view with expandable rows + CSV export
-│ ├── Sidebar.js # Sidebar navigation
-│ ├── Sidebar.css # Sidebar styling
-│ ├── index.js # React entry point
-│ ├── index.css # Base global styles
-│ ├── firebaseConfig.js # Firebase project configuration
-│ ├── Register.js # User registration form
-│ ├── Login.js # User login form
-│ ├── LogoutButton.js # Logout button component
-│ ├── reportWebVitals.js # Performance metrics setup
-│ ├── setupTests.js # Jest testing setup
-│ └── ...
-├── public/
-│ ├── index.html # Root HTML file
-│ └── ...
-├── package.json
-├── README.md
-
-
+## Table of Contents
+<!-- inline-review: Add ToC so new contributors can navigate quickly -->
+- [Quick Start](#quick-start)
+- [Project Structure](#project-structure)
+- [Core Screens](#core-screens)
+- [Entity Schemas](#entity-schemas)
+- [Audit & Mutability](#audit--mutability)
+- [User-Defined Fields](#user-defined-fields)
+- [Guardrails (Protect Customers UI)](#guardrails-protect-customers-ui)
+- [CI / GitHub](#ci--github)
+- [Environment & Firebase Setup](#environment--firebase-setup)
+- [Scripts](#scripts)
+- [Contributing](#contributing)
+- [License](#license)
 
 ---
 
-## 🔑 Firebase Configuration
+## Quick Start
+<!-- inline-review: Replace CRA boilerplate with concrete steps used in this repo -->
 
-The app uses Firebase for Authentication and Firestore for storage.  
-Configuration is located in:
-
-src/firebaseConfig.js
-
-
-This file initializes the Firebase app and provides services for authentication and Firestore.
-
-⚠️ **Best practice**: Do not commit real API keys to public repos. Use `.env` files for sensitive values.
-
----
-
-## 🛠️ Development
-
-### Install dependencies
 ```bash
 npm install
-
 npm start
+```
 
-#Run tests
-npm test
+App runs at http://localhost:3000.
 
-#Build for production
-npm run build
+---
 
-📊 Data Management
+## Project Structure
+<!-- inline-review: Replace partial tree with current files and scripts -->
 
-Schemas: defined in DataSchemas.js
+```
+src/
+├── App.js
+├── AppWrapper.js              # provides FirebaseContext { appId, tenantId, db, user }
+├── ChangeEntity.js            # generic edit screen with audit panel
+├── DataEntryForm.js           # generic create screen
+├── DataSchemas.js             # per-branch schema config (fields, list, csv)
+├── ListDataView.js            # list/table view (paging, sort, CSV export)
+├── Login.js
+├── LogoutButton.js
+├── Register.js
+├── Sidebar.js                 # navigation; sticky on desktop
+├── index.js
+├── App.css
+├── Sidebar.css
+└── index.css
 
-Forms: handled via DataEntryForm.js
+scripts/
+├── entity-guard.js            # snapshot/verify protected files
+├── patch-verify.js            # check single file hash before patching
+└── removeCreatedAt.js         # optional one-off backfill to drop createdAt
+```
 
-Listings: handled via ListDataView.js
+---
 
-Exports: CSV export supported via table header actions
+## Core Screens
+<!-- inline-review: Document the three standardized screens per entity -->
 
-Best practices followed:
+- **Add &lt;Entity&gt;** – `DataEntryForm.js`
+- **Change &lt;Entity&gt;** – `ChangeEntity.js` (left: fields; right: audit panel)
+- **List &lt;Entity&gt;** – `ListDataView.js` (sticky header/sidebar, CSV export, paging)
 
-Sticky headers for large datasets
+Currently implemented: **Customers** (baseline), with placeholders for **Employees, Vendors, Assets, Inventory, Transactions, Company Info**.
 
-Consistent JSON-to-table formatting
+---
 
-Multi-tenant data separation
+## Entity Schemas
+<!-- inline-review: Explain how DataSchemas.js drives Add/Change/List -->
 
-🧪 Testing & Metrics
+`DataSchemas.js` declares fields and behaviors for each branch. Notable points:
 
-Testing: Jest + React Testing Library
-Setup in setupTests.js
+- All entities include **five user-defined text fields**: `userField1..userField5`. <!-- inline-review -->
+- Customers no longer store `createdAt`. We still stamp **createdBy, updatedAt, updatedBy**. <!-- inline-review -->
+- List views exclude sensitive items (e.g., SSN/tax IDs) from CSV and table by default.
+- Default sort is `customerNbr` asc for Customers; other entities can set meaningful defaults.
 
-Performance Metrics:
-Provided via reportWebVitals.js using web-vitals
+---
 
-🔒 Security Notes
+## Audit & Mutability
+<!-- inline-review: Centralize audit behavior so new entities follow the same rules -->
 
-Multi-tenant separation using Firebase Auth UID + Firestore rules
+- Immutable across collections: **createdBy** (displayed), partition keys (**tenantId**, **appId**).
+- On **create**: `createdBy`, `updatedBy = user.email|uid`, `updatedAt = serverTimestamp()`.
+- On **update**: `updatedBy`, `updatedAt` restamped. Client-provided audit/partition fields are stripped before write.
+- Audit panel in `ChangeEntity.js` shows: **Created By**, **Updated By**, **Updated At**.
 
-Always validate user permissions server-side
+---
 
-Use environment variables for API keys
+## User-Defined Fields
+<!-- inline-review: Make the flexibility explicit for all entities -->
 
-✅ Patch Verification
+Every entity exposes five optional text inputs labeled **User Field 1–5**. They persist with the document and appear on both Add and Change screens.
 
-You can verify changes using the patch verification script:
+---
 
-node scripts/patch-verify.js src/ListDataView.js <sha256-checksum>
+## Guardrails (Protect Customers UI)
+<!-- inline-review: Document the snapshot/verify flow that prevents regressions -->
 
+Snapshot the “golden” Customers UI files and verify before accepting patches or starting a new chat.
 
-This ensures applied patches match expected file integrity.
+**Snapshot (create/update baseline):**
+```bash
+npm run entity:snapshot
+```
+This writes `.entity-snapshots.json` with SHA-256 hashes for protected files:
+`src/App.js, src/Sidebar.js, src/DataEntryForm.js, src/ChangeEntity.js, src/DataSchemas.js, src/ListDataView.js, src/index.js, src/Register.js`
 
-📌 Next Steps
+**Verify (before applying patches or starting work):**
+```bash
+npm run entity:verify
+```
+If it fails, re-sync or re-snapshot intentionally.
 
-Add more Firestore collections (Orders, Invoices, etc.)
+**Pre-commit hook (automatic):**
+Husky runs `entity:verify`  `lint` on every commit and blocks if either fails.
 
-Extend form generation from schema definitions
+---
 
-Improve UI consistency across large datasets
+## CI / GitHub
+<!-- inline-review: CI mirrors local guardrails; add branch protection guidance -->
 
-Expand automated testing coverage
+- **Badge** at top reflects the `Entity UI Guard` workflow status.
+- Workflow file: `.github/workflows/entity-verify.yml`
+- It runs on push/PR: `npm ci`, `npm run entity:verify`, `npm run lint`.
+- Add a **branch protection rule** to require the check to pass before merging.
 
+Repo: https://github.com/SteveF16/ignite-appv2
 
+---
 
+## Environment & Firebase Setup
+<!-- inline-review: Clarify Firebase expectations and multitenant pathing -->
 
+- Create a Firebase project and enable **Firestore** and **Authentication (Email/Password)**.
+- Add web app credentials in `src/firebaseConfig.js` (keep secrets out of source control).
+- App expects tenant-scoped paths: `artifacts/{appId}/tenants/{tenantId}/{collection}`.
+- `AppWrapper.js` supplies `FirebaseContext` with `{ appId, tenantId, db, user }`.
+
+---
+
+## Scripts
+<!-- inline-review: Surface the key npm scripts as source-of-truth -->
+
+```jsonc
+// package.json (excerpt)
+{
+  "scripts": {
+    "start": "react-scripts start",
+    "build": "react-scripts build",
+    "lint": "eslint src --ext .js,.jsx",
+    "patch:verify": "node scripts/patch-verify.js",
+    "entity:snapshot": "node scripts/entity-guard.js snapshot --files=src/App.js,src/Sidebar.js,src/DataEntryForm.js,src/ChangeEntity.js,src/DataSchemas.js,src/ListDataView.js,src/index.js,src/Register.js",
+    "entity:verify": "node scripts/entity-guard.js verify",
+    "guard:snapshot": "npm run entity:snapshot",
+    "guard:verify": "npm run entity:verify",
+    "prepare": "husky"
+  }
+}
+```
+
+### One-off Firestore backfill (optional)
+Remove `createdAt` field across tenants/collections (dry-run by default):
+```bash
+node scripts/removeCreatedAt.js --appId=default-app-id
+node scripts/removeCreatedAt.js --appId=default-app-id --apply
+```
+
+Credentials: use `GOOGLE_APPLICATION_CREDENTIALS` or `gcloud auth application-default login`.
+
+---
+
+## Contributing
+<!-- inline-review: Standard OSS flow tailored to this repo -->
+
+1. Fork and clone.
+2. `npm install`
+3. `npm run entity:verify` (should pass)  
+4. Create a feature branch; develop and test.
+5. If you intentionally change Customers UI, `npm run entity:snapshot` and commit `.entity-snapshots.json`.
+6. PR to `main` (Entity UI Guard  lint must pass).
+
+---
+
+## License
+
+MIT
 

@@ -1,6 +1,15 @@
 #!/usr/bin/env node
 /* eslint-env node */ // <-- tell ESLint this is a Node script (enables `require`, `process`)
 /* eslint-disable no-console */
+
+/***I see the problem 👍 — your entity-guard.js script is written as a Node.js CLI utility 
+ * (uses require, process, fs, path, etc.), but your IDE (VS Code with ESLint) is linting it
+ *  as if it were browser-side JavaScript. In the browser, require and process don’t exist,
+ *  hence all those no-undef errors.
+
+✅ You don’t need to change the script itself — it’s correct for Node.js.
+Instead, you need to tell ESLint that this file should be linted in a Node environment. */
+
 'use strict';
 /**
  * Patch Base-Hash Verifier

@@ -1,0 +1,16 @@
+## Everyday “what do I type?” guide
+
+When starting a new dev session (or a new ChatGPT conversation):
+bash +npm run entity:verify +
+If it passes ✅, you’re safe to accept/apply patches.
+If it fails ❌, upload the changed files in chat so patches are built from your current sources, or run npm run entity:snapshot if the changes were intentional.
+
+Right after applying patches to other entities (Employees/Vendors/Assets):
+bash +npm run entity:verify +
+This confirms Customers UI files still match the protected snapshot.
+
+Only after you intentionally change Customers UI:
+bash +npm run entity:snapshot +git add .entity-snapshots.json +git commit -m "refresh Customers UI snapshot" +
+This advances the baseline so future verifies compare against the new good state.
+
+*** End Patch

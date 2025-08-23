@@ -18,6 +18,7 @@ const iconMap = {
     'Employees': Users,
     'Assets': Warehouse,
     'Finances': Banknote,
+     'Vendors': User, // ← uncomment when you add the Vendors branch (reuses person icon)
 };
 
 const Sidebar = ({ sidebarOpen, setSidebarOpen, onNavigationClick, onSignOut, selectedBranch, selectedSubBranch, navigation }) => {

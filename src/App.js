@@ -1,7 +1,6 @@
-import React, { useState, useContext } from "react";
+import React, { useContext, useState } from "react"; // inline-review: drop unused useEffect to fix lint
+import { signOut } from "firebase/auth";            // inline-review: import only what is used
 
-// eslint-disable-next-line no-unused-vars
-import { getAuth, signOut } from "firebase/auth";
 
 import { FirebaseContext } from "./AppWrapper";
 import Sidebar from "./Sidebar";
@@ -9,17 +8,23 @@ import DataEntryForm from "./DataEntryForm";
 import { List } from "lucide-react";
 import { Clipboard } from "lucide-react";
 import ListDataView from "./ListDataView";
+import { getCollectionFromBranch } from "./collectionMap"; // centralize branch→collection mapping
+import ChangeEntity from "./ChangeEntity";                 // ensure component is registered in bundle           // inline-review
+import { CollectionSchemas } from "./DataSchemas";         // will now resolve via 'customers' OR 'Customers'    // inline-review
+
+
+// This file is the main application component that renders the sidebar, header, and main content area.
 
 const navigation = [
   {
     name: "Business",
     subBranches: [
-      { name: "Customers", subBranches: ["Add Customer", "List Customers"] },
-      { name: "Employees", subBranches: ["Add Employee", "List Employees"] },
-      { name: "Assets", subBranches: ["Add Asset", "List Assets"] },
-      {
-        name: "Finances",
-        subBranches: ["Add Transaction", "List Transactions"],
+      // EDIT: add Change <Entity> across branches so the pattern scales to 10–20 tables
+      { name: "Customers", subBranches: ["Add Customer", "Change Customer", "List Customers"] },
+      { name: "Employees", subBranches: ["Add Employee", "Change Employee", "List Employees"] },
+      { name: "Assets", subBranches: ["Add Asset", "Change Asset", "List Assets"] },
+      { name: "Finances", 
+       subBranches: ["Add Transaction", "Change Transaction", "List Transactions"],
       },
     ],
   },
@@ -57,7 +62,6 @@ const App = () => {
         </button>
       </div>
 
-      {/* Sidebar */}
       {/* Sidebar (fixed on lg+, hidden on mobile) */}
       <Sidebar
         sidebarOpen={sidebarOpen}
@@ -105,25 +109,44 @@ const App = () => {
         {/* Main Content Area */}
         <main className="flex-1 p-6 overflow-y-auto min-w-0">{/* min-w-0 keeps inner scroller authoritative */}
          {/* Constrain horizontal scrolling to this inner wrapper (NOT the whole page) */}
-+         <div className="overflow-x-auto bg-gray-100">{/* bg matches page bg while scrolling horizontally */}
+         <div className="overflow-x-auto bg-gray-100">{/* bg matches page bg while scrolling horizontally */}
            <h2 className="text-3xl font-bold text-gray-800 mb-6">
               {selectedBranch} {" > "} {selectedSubBranch}
             </h2>
             <div className="bg-white p-6 rounded-lg shadow-xl">
               {selectedSubBranch.includes("Add") && (
                 <DataEntryForm
-                  selectedBranch={selectedBranch}
+                  selectedBranch={selectedBranch} // UI label used for headings
                   selectedSubBranch={selectedSubBranch}
-                  onSave={() => {
+                  // Make forms generic across 10–20 tables by passing the collection id explicitly.
+                  // ListDataView/ChangeEntity will receive the same id for consistent APIs.
+                  collectionName={getCollectionFromBranch(selectedBranch)} // ← e.g., "customers"
+                 onSave={() => {
                     // You can add a success message or navigate here
                     console.log("Data saved!");
                   }}
                 />
               )}
+
+
+              {/* EDIT: Generic Change (edit) screen across all entities.
+                 - Locks immutable fields (e.g., customerNumber) visually & in payload
+                 - Shows standardized Audit panel (createdAt/By + updatedAt/By) */}
+              {selectedSubBranch.startsWith("Change ") && (
+                <ChangeEntity
+                  entityLabel={selectedBranch}                                    // UI label "Customers"
+                  collectionName={getCollectionFromBranch(selectedBranch)}        // e.g., "customers"
+                  schema={CollectionSchemas?.[getCollectionFromBranch(selectedBranch)]} // pass per-entity schema
+                />
+              )}
+
               {/* ✅ NEW: Code to show the list view */}
               {selectedSubBranch.includes("List") && (
-                <ListDataView branch={selectedBranch} />
-              )}
+                <ListDataView
+                  branch={selectedBranch}                             // keep for backwards‑compat
+                  collectionName={getCollectionFromBranch(selectedBranch)} // source of truth
+                />
+             )}
 
               {/* You would add other components here for listing data */}
             </div>

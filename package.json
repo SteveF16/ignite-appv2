@@ -22,7 +22,17 @@
     "start": "react-scripts start",
     "build": "react-scripts build",
     "test": "react-scripts test",
-    "eject": "react-scripts eject"
+    "eject": "react-scripts eject",
+    "patch:verify": "node scripts/patch-verify.js",
+    "entity:snapshot": "node scripts/entity-guard.js snapshot --files=src/App.js,src/Sidebar.js,src/DataEntryForm.js,src/ChangeEntity.js,src/DataSchemas.js,src/ListDataView.js,src/index.js,src/Register.js",
+    "entity:verify": "node scripts/entity-guard.js verify",
+    "guard:snapshot": "npm run entity:snapshot",
+    "guard:verify": "npm run entity:verify",
+    "lint": "eslint src --ext .js,.jsx",
+    "prepare": "husky" 
+  },
+    "devDependencies": {
+    "husky": "^9.0.0"
   },
   "eslintConfig": {
     "extends": [
