@@ -1,4 +1,4 @@
-/* global __initial_auth_token */
+// removed stray global directive that collides with eslint's built-ins   
 
 import React, { useState, useEffect, createContext } from 'react';
 import { initializeApp } from 'firebase/app';

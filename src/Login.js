@@ -1,5 +1,5 @@
 import React, { useState, useContext } from 'react';
-import { getAuth, signInWithEmailAndPassword, signOut } from 'firebase/auth';
+import { signInWithEmailAndPassword, signOut } from 'firebase/auth'; // inline-review: drop unused getAuth to satisfy no-unused-vars
 import { FirebaseContext } from './AppWrapper';
 import { LogIn } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
@@ -82,11 +82,11 @@ const Login = () => {
                         <LogIn size={20} />
                         <span>Sign In</span>
                     </button>
-                </form>
-                
-                <div className="text-center text-sm text-gray-500">
-                    Don't have an account? <Link to="/Register" className="text-blue-600 hover:underline">Register here.</Link>
-                </div>
+                </form>                
+                 <div className="text-center text-sm text-gray-500">
+                    Don&apos;t have an account? <Link to="/Register" className="text-blue-600 hover:underline">Register here.</Link>
+                </div>  {/* inline-review: escape apostrophe to satisfy react/no-unescaped-entities */}
+
             </div>
         </div>
     );
