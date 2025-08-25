@@ -1,14 +1,15 @@
-import React, { useContext, useEffect, useMemo, useState } from "react"; // drop unused useRef to satisfy no-unused-vars  // inline-review
-import { collection, 
-  doc, 
-  getDoc, 
-  getDocs, 
-  limit, 
-  orderBy, 
-  query, 
-  updateDoc, 
-  serverTimestamp } from "firebase/firestore"; // add serverTimestamp  
-
+import React, { useContext, useEffect, useMemo, useState } from "react";
+import {
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  limit,
+  orderBy,
+  query,
+  updateDoc,
+  serverTimestamp,
+} from "firebase/firestore";
 import { FirebaseContext } from "./AppWrapper"; // FIX: get context from AppWrapper, not firestore  // inline-review
 
 // Generic, schema‑driven "Change <Entity>" editor for 10–20 tables.
@@ -27,7 +28,12 @@ const DEFAULT_SEARCH_KEYS = [
 ]; // align with customers schema  // inline-review
 const COMMON_IMMUTABLE = ["tenantId", "appId", "createdAt", "createdBy"]; // baseline immutables across all collections
 
-export default function ChangeEntity({ entityLabel, collectionName, schema }) {
+export default function ChangeEntity({ 
+  entityLabel, 
+  collectionName, 
+  schema,
+  initialDocId           // ← NEW: allow deep‑linking a specific doc from List view  
+  }) {
   const {
     db,
     tenantId,
@@ -52,45 +58,64 @@ export default function ChangeEntity({ entityLabel, collectionName, schema }) {
     () => Array.from(new Set([...COMMON_IMMUTABLE, ...collectionImmutable])),
     [collectionImmutable]
   );
-  const defaultSort = schema?.list?.defaultSort || {
-    key: searchKeys[0] || "name1",
-    dir: "asc",
-  }; // basic default
 
-  //  const qRef = useRef(0); // used to ignore stale responses
+  const defaultSort =
+    schema?.list?.defaultSort || { key: searchKeys[0] || "name1", dir: "asc" }; // now used to sort list
 
-  // Initial fetch (first 100, sorted); we filter client‑side for now
+
+  // load when a record is chosen (or deep‑linked via initialDocId)
   useEffect(() => {
+    const idToLoad = initialDocId || selectedId;               // prefer deep‑link on first load  // inline-review
+    if (!idToLoad) return;
     let cancelled = false;
-    async function fetchInitial() {
-      if (!db || !tenantId || !collectionName) return;
-      setLoading(true);
+    (async () => {
       try {
-        const base = collection(
-          db,
-          `artifacts/${appId}/tenants/${tenantId}/${collectionName}`
-        );
-        const q = query(
-          base,
-          orderBy(defaultSort.key, defaultSort.dir === "desc" ? "desc" : "asc"),
-          limit(100) // first 100 as requested
-        );
-        const snap = await getDocs(q);
-        if (cancelled) return;
-        const list = [];
-        snap.forEach((d) => list.push({ id: d.id, ...d.data() }));
-        setItems(list);
+        setLoading(true);
+        const app = typeof __app_id !== "undefined" ? __app_id : "default-app-id";
+        const fullPath = `artifacts/${app}/tenants/${tenantId}/${collectionName.toLowerCase()}`;
+        const snap = await getDoc(doc(db, fullPath, idToLoad)); // use tenant-scoped path
+        if (!cancelled) {
+          setForm(snap.exists() ? snap.data() : {});
+          if (initialDocId) setSelectedId(initialDocId);       // reflect in selector            // inline-review
+        }
       } catch (e) {
-        console.error("fetchInitial failed", e);
+        if (!cancelled) setMessage(String(e?.message || e));
       } finally {
         if (!cancelled) setLoading(false);
       }
-    }
-    fetchInitial();
+    })();
     return () => {
       cancelled = true;
     };
-  }, [db, tenantId, appId, collectionName, defaultSort.key, defaultSort.dir]);
+  }, [db, appId, tenantId, collectionName, selectedId, initialDocId]);
+
+
+  // Fetch the first page (<=100) for the picker
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!db || !tenantId || !collectionName) return;
+      try {
+        const app = typeof __app_id !== "undefined" ? __app_id : "default-app-id";
+        const fullPath = `artifacts/${app}/tenants/${tenantId}/${collectionName.toLowerCase()}`;
+        const constraints = [limit(100)];
+        if (defaultSort?.key) {
+          constraints.unshift(orderBy(defaultSort.key, defaultSort.dir === "desc" ? "desc" : "asc"));
+        }
+        const q = query(collection(db, fullPath), ...constraints);
+        const snap = await getDocs(q);
+        if (!cancelled) {
+          setItems(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+        }
+      } catch (e) {
+        if (!cancelled) setMessage(String(e?.message || e));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [db, tenantId, collectionName, defaultSort]);
+
 
   // ──────────────────────────────────────────────────────────────────────────
   // Dot‑path helpers so nested schema paths (e.g. "billing.address.line1")
@@ -147,10 +172,9 @@ export default function ChangeEntity({ entityLabel, collectionName, schema }) {
     setMessage("");
     if (!id) return;
     try {
-      const ref = doc(
-        db,
-        `artifacts/${appId}/tenants/${tenantId}/${collectionName}/${id}`
-      );
+      const app = typeof __app_id !== "undefined" ? __app_id : appId || "default-app-id";
+      const fullPath = `artifacts/${app}/tenants/${tenantId}/${collectionName.toLowerCase()}`;
+      const ref = doc(db, fullPath, id);
       const snap = await getDoc(ref);
       if (snap.exists()) {
         setForm(snap.data());
@@ -180,9 +204,11 @@ export default function ChangeEntity({ entityLabel, collectionName, schema }) {
     try {
       
       const payload = { ...form };
+
       // Always stamp audit on update using server time & current actor             
       payload.updatedAt = serverTimestamp();
       payload.updatedBy = user?.email || user?.uid || "unknown";
+
       // Strip immutable fields (created*, tenant/app ids) from outgoing payload    
       for (const k of allImmutable) delete payload[k];
       for (const f of fields) {
@@ -190,12 +216,8 @@ export default function ChangeEntity({ entityLabel, collectionName, schema }) {
         if (k && f?.immutable) delete payload[k];
       }
       
-
-      
-      const ref = doc(
-        db,
-        `artifacts/${appId}/tenants/${tenantId}/${collectionName}/${selectedId}`
-      );
+      const ref = doc(db, `artifacts/${appId}/tenants/${tenantId}/${collectionName.toLowerCase()}`,
+                   selectedId);
 
       // Update the document in Firestore
       await updateDoc(ref, payload);
@@ -327,7 +349,7 @@ export default function ChangeEntity({ entityLabel, collectionName, schema }) {
             className="w-full rounded-md border border-gray-300 p-2"
             value={selectedId}
             onChange={(e) => loadOne(e.target.value)}
-            disabled={loading}
+            disabled={loading || !!initialDocId}     /* lock when deep‑linked */     
           >
             <option value="">— Choose —</option>
             {filtered.map((it) => (

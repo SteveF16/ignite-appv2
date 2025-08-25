@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useContext, useCallback } from "react";
+import React, { useState, useEffect, useContext, useCallback, useMemo } from "react";
 import {
   collection,
   onSnapshot,
@@ -9,8 +9,13 @@ import {
 } from "firebase/firestore";
 import { FirebaseContext } from "./AppWrapper";
 import { Edit, Trash2, Download } from "lucide-react";
-import DataEntryForm from "./DataEntryForm";
+import ChangeEntity from "./ChangeEntity"; // use unified editor instead of legacy inline form  
 import { CollectionSchemas } from "./DataSchemas";
+
+// Map "List Customers" → "Customers", etc.
+function getCollectionFromBranch(branch) {
+  return String(branch || "").replace(/^List\s+/i, "");
+}
 
 // ---------------------------------------------------------------------------
 // Render helpers
@@ -62,6 +67,12 @@ const ListDataView = ({ branch }) => {
   const [viewData, setViewData] = useState([]); // shaped rows for table/CSV
   const [loading, setLoading] = useState(true);
   const [editItem, setEditItem] = useState(null);
+
+  // Sorting state – seeded from schema.defaultSort
+  const [sortKey, setSortKey] = useState(null);
+  const [sortDir, setSortDir] = useState("asc"); // "asc" | "desc"
+
+
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [itemToDelete, setItemToDelete] = useState(null);
 
@@ -145,6 +156,68 @@ const ListDataView = ({ branch }) => {
       return next.map((c) => asMap.get(c.key) || c);
     });
   }, [data, shapeForList]);
+
+  // Initialize sort from the schema for this branch/collection (no global listCfg).      // inline-review: removes undefined 'listCfg'
+  useEffect(() => {
+    if (sortKey) return;
+    const collectionName = branch.replace("List ", "");
+    const ds = CollectionSchemas?.[collectionName]?.list?.defaultSort;
+    if (ds?.key) {
+      setSortKey(ds.key);
+      setSortDir(ds.dir === "desc" ? "desc" : "asc");
+    }
+  }, [branch, sortKey]); // keep deps small to avoid re-initializing on every render
+
+
+
+  // Safe getter for nested paths like "billing.address.city"
+  const getByPath = (obj, path) => {
+    if (!obj || !path) return undefined;
+    return path.split(".").reduce((acc, k) => (acc == null ? acc : acc[k]), obj);
+  };
+
+  // Compare two values (numbers, strings, booleans, dates, timestamps)
+  const cmp = (a, b) => {
+    if (a == null && b == null) return 0;
+    if (a == null) return -1;
+    if (b == null) return 1;
+    // Firestore Timestamp or Date support
+    const ax = typeof a?.toDate === "function" ? a.toDate() : a;
+    const bx = typeof b?.toDate === "function" ? b.toDate() : b;
+    if (typeof ax === "number" && typeof bx === "number") return ax - bx;
+    if (ax instanceof Date && bx instanceof Date) return ax - bx;
+    return String(ax).localeCompare(String(bx), undefined, { numeric: true, sensitivity: "base" });
+  };
+
+
+  // Derive sorted rows from viewData
+  const sortedRows = useMemo(() => {
+    if (!Array.isArray(viewData) || viewData.length === 0) return [];
+    if (!sortKey) return viewData;
+    const copy = [...viewData];
+    copy.sort((r1, r2) => {
+      const v1 = getByPath(r1, sortKey);
+      const v2 = getByPath(r2, sortKey);
+      const c = cmp(v1, v2);
+      return sortDir === "desc" ? -c : c;
+    });
+    return copy;
+  }, [viewData, sortKey, sortDir]);
+
+
+
+
+  const toggleSort = (key) => {
+    if (!key) return;
+    // click same header to flip direction, new header resets to asc                 // inline-review
+    setSortKey((prevKey) => (prevKey === key ? prevKey : key));
+    setSortDir((prevDir) =>
+      sortKey === key ? (prevDir === "asc" ? "desc" : "asc") : "asc"
+    );
+  };
+
+
+// end of sortable routines
 
   // Download CSV respects current column visibility  schema-level CSV exclusions
   const handleDownloadCSV = () => {
@@ -249,27 +322,31 @@ const ListDataView = ({ branch }) => {
 
   const cancelDelete = () => {
     setIsDeleteModalOpen(false);
+    setIsDeleteModalOpen(false);
     setItemToDelete(null);
   };
 
-  const handleEditSave = () => {
-    setEditItem(null);
-  };
 
   if (loading) {
     return <div className="text-center py-8">Loading...</div>;
   }
 
+  // ────────────────────────────────────────────────────────────────────────────
+  // Unified editor: render ChangeEntity instead of the legacy DataEntryForm.
+  // This keeps a single edit surface (same as the Sidebar → Change Customer).   // inline-review
+  // If user clicked Edit, render the standardized ChangeEntity (deep‑linked)
   if (editItem) {
+    const collectionName = getCollectionFromBranch(branch);
     return (
-      <DataEntryForm
-        selectedBranch={`Change ${branch}`}
-        initialData={editItem}
-        onSave={handleEditSave}
-        onCancel={() => setEditItem(null)}
+      <ChangeEntity
+        entityLabel={branch}
+        collectionName={collectionName}
+        schema={CollectionSchemas?.[collectionName]}
+        initialDocId={editItem.id}      /* open the exact row the user clicked */           // inline-review
       />
     );
   }
+
 
   if (viewData.length === 0) {
     return (
@@ -311,15 +388,29 @@ const ListDataView = ({ branch }) => {
           {/* Sticky header so labels remain visible while scrolling */}
           <thead className="bg-gray-100">
             <tr>
-              {headers.map((header) => (
-                <th
-                  key={header}
-                  scope="col"
-                  className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider whitespace-nowrap"
-                >
-                  {header.replace(/([A-Z])/g, " $1").trim()}
-                </th>
-              ))}
+
+              {headers.map((header) => {
+                const isActive = sortKey === header;
+                const label = header.replace(/([A-Z])/g, " $1").trim();
+                return (
+                  <th
+                    key={header}
+                    scope="col"
+                    className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider whitespace-nowrap"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => toggleSort(header)}
+                      className="inline-flex items-center gap-1 hover:text-gray-900"
+                      title={`Sort by ${label}`}
+                    >
+                      <span>{label}</span>
+                      {isActive && <span>{sortDir === "asc" ? "▲" : "▼"}</span>}
+                    </button>
+                  </th>
+                );
+              })}
+
               <th
                 scope="col"
                 className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider"
@@ -329,7 +420,7 @@ const ListDataView = ({ branch }) => {
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-gray-200">
-            {viewData.map((item) => (
+             {sortedRows.map((item) => (
               <tr key={item.id} className="hover:bg-gray-100 transition-colors">
                 {headers.map((header) => (
                   <td

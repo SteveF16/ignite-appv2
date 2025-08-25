@@ -1,0 +1,7 @@
+
+
+#!/usr/bin/env sh
+# Block pushes if protected UI files drift from snapshots. Keeps Customers UI safe.   # inline-review
+npm run entity:verify || exit 1
+
+

@@ -158,6 +158,14 @@ const CustomersSchema = {
   search: { keys: ["customerNbr", "name1", "name2", "contacts.primary.email", "billing.address.city", "billing.address.state", "billing.address.country"] },
   list: {
     defaultSort: { key: "customerNbr", dir: "asc" },
+    /**
+     * Make every visible column clickable for sorting by default.
+     * You can restrict later by providing an explicit whitelist:
+     *   sortableKeys: ["customerNbr","name1","status",...]
+     */
+    sortable: true,
+    // optional whitelist (leave commented unless you want to limit):
+    // sortableKeys: ["customerNbr","name1","name2","name3","status","billing.address.city","billing.address.state","billing.address.country","credit.limit","credit.onHold","billing.paymentTerms"],
     exclude: ["tax.ssn", "tax.ein", "tax.taxId", "billing.tax.taxId", "createdBy", "updatedBy", "deletedAt", "deletedBy"],
   },
   csv: { exclude: ["tax.ssn", "tax.ein", "tax.taxId", "billing.tax.taxId"] },

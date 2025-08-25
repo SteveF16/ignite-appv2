@@ -1,0 +1,15 @@
+
+
+# Normalize line endings cross‑platform (Windows/macOS/Linux)                        # inline-review
+* text=auto
+
+# Ensure shell scripts stay LF so Husky hooks run correctly on Windows
+*.sh text eol=lf
+.husky/* text eol=lf
+
+# Keep JSON/JS/TS consistent; Git will normalize on checkout according to OS
+*.json text
+*.js   text
+*.jsx  text
+
+
