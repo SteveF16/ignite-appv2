@@ -1,4 +1,10 @@
-import React, { useState, useEffect, useContext, useCallback, useMemo } from "react";
+import React, {
+  useState,
+  useEffect,
+  useContext,
+  useCallback,
+  useMemo,
+} from "react";
 import {
   collection,
   onSnapshot,
@@ -9,7 +15,7 @@ import {
 } from "firebase/firestore";
 import { FirebaseContext } from "./AppWrapper";
 import { Edit, Trash2, Download } from "lucide-react";
-import ChangeEntity from "./ChangeEntity"; // use unified editor instead of legacy inline form  
+import ChangeEntity from "./ChangeEntity"; // use unified editor instead of legacy inline form
 import { CollectionSchemas } from "./DataSchemas";
 
 // Map "List Customers" → "Customers", etc.
@@ -28,7 +34,7 @@ function getCollectionFromBranch(branch) {
 const toCsvCell = (val) => {
   // NOTE: removed unused `key` param to satisfy eslint(no-unused-vars).
   // Keep this helper focused on escaping & quoting the provided value.
-  const safe = val === undefined || val === null ? '' : String(val);
+  const safe = val === undefined || val === null ? "" : String(val);
   return `"${safe.replace(/"/g, '""')}"`; // <-- escape inner quotes
 };
 
@@ -61,7 +67,8 @@ const renderValue = (value, key) => {
   return value !== undefined && value !== null ? String(value) : "";
 };
 
-const ListDataView = ({ branch }) => {
+const ListDataView = ({ branch, navTick }) => {
+  // navTick forces a refresh when user re-presses "List ..."
   const { db, tenantId } = useContext(FirebaseContext);
   const [data, setData] = useState([]); // raw firestore rows
   const [viewData, setViewData] = useState([]); // shaped rows for table/CSV
@@ -72,6 +79,72 @@ const ListDataView = ({ branch }) => {
   const [sortKey, setSortKey] = useState(null);
   const [sortDir, setSortDir] = useState("asc"); // "asc" | "desc"
 
+  // 🔄 Unified nav/listener effect
+  // When the user navigates (Change → List), **first** leave edit mode, **then**
+  // wire exactly one Firestore listener for the list. This removes the previous
+  // race between two effects (one clearing editItem, one subscribing), which in
+  // StrictMode could subscribe and immediately unsubscribe before data arrived.
+  useEffect(() => {
+    // 1) Always leave edit mode on branch change so the table renders.
+    console.log(
+      "ListDataView: STEVE- NAV change → leaving edit mode & (re)subscribing",
+      { branch, navTick }
+    ); // inline-review
+
+    setEditItem(null);
+
+    // 2) Guard prerequisites.
+    if (!db || !tenantId || !branch) {
+      console.debug(
+        "ListDataView: Skipping subscribe — missing db/tenantId/branch"
+      );
+      setLoading(false);
+      return;
+    }
+
+    // 3) Build query scoped to tenant + collection.
+    const appId = typeof __app_id !== "undefined" ? __app_id : "default-app-id";
+    const collectionName = branch.replace("List ", "").toLowerCase();
+    const collectionPath = `artifacts/${appId}/tenants/${tenantId}/${collectionName}`;
+    const q = query(
+      collection(db, collectionPath),
+      where("tenantId", "==", tenantId)
+    );
+
+    // 4) Subscribe once; protect setState against StrictMode double-invoke.     // inline-review
+    setLoading(true);
+    let cancelled = false;
+    console.log(`ListDataView: Subscribing to '${collectionPath}'`);
+    const unsubscribe = onSnapshot(
+      q,
+      (querySnapshot) => {
+        if (cancelled) return; // ignore late emissions after cleanup            // inline-review
+        const fetchedData = querySnapshot.docs.map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
+        }));
+        setData(fetchedData);
+        setLoading(false);
+        console.log(
+          `ListDataView: Snapshot received for '${collectionPath}' (${fetchedData.length} rows)`
+        );
+      },
+      (error) => {
+        if (cancelled) return;
+        console.error("ListDataView onSnapshot error", error);
+        setLoading(false);
+      }
+    );
+
+    // 5) Single cleanup path.
+    return () => {
+      cancelled = true;
+      console.log(
+        `ListDataView: Cleanup → unsubscribing from '${collectionPath}'`
+      );
+      unsubscribe();
+    };
+  }, [db, tenantId, branch, navTick]); // include navTick so re-pressing "List ..." resets and resubscribes
 
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [itemToDelete, setItemToDelete] = useState(null);
@@ -113,9 +186,10 @@ const ListDataView = ({ branch }) => {
             ]
               .filter(Boolean)
               .join(", "),
-            // Credit controls
-            creditLimit: row.billing?.creditLimit ?? "",
-            onCreditHold: row.billing?.onCreditHold ? "Yes" : "No",
+            // Credit controls (unify on new `credit.*` shape; keep legacy fallback)
+            creditLimit: row.credit?.limit ?? row.billing?.creditLimit ?? "",
+            onCreditHold:
+              row.credit?.onHold ?? row.billing?.onCreditHold ? "Yes" : "No",
             paymentTerms: row.billing?.paymentTerms ?? "",
             // Timestamps
             createdAt: row.createdAt,
@@ -157,7 +231,7 @@ const ListDataView = ({ branch }) => {
     });
   }, [data, shapeForList]);
 
-  // Initialize sort from the schema for this branch/collection (no global listCfg).      // inline-review: removes undefined 'listCfg'
+  // Initialize sort from the schema for this branch/collection (no global listCfg).
   useEffect(() => {
     if (sortKey) return;
     const collectionName = branch.replace("List ", "");
@@ -168,12 +242,12 @@ const ListDataView = ({ branch }) => {
     }
   }, [branch, sortKey]); // keep deps small to avoid re-initializing on every render
 
-
-
   // Safe getter for nested paths like "billing.address.city"
   const getByPath = (obj, path) => {
     if (!obj || !path) return undefined;
-    return path.split(".").reduce((acc, k) => (acc == null ? acc : acc[k]), obj);
+    return path
+      .split(".")
+      .reduce((acc, k) => (acc == null ? acc : acc[k]), obj);
   };
 
   // Compare two values (numbers, strings, booleans, dates, timestamps)
@@ -186,9 +260,11 @@ const ListDataView = ({ branch }) => {
     const bx = typeof b?.toDate === "function" ? b.toDate() : b;
     if (typeof ax === "number" && typeof bx === "number") return ax - bx;
     if (ax instanceof Date && bx instanceof Date) return ax - bx;
-    return String(ax).localeCompare(String(bx), undefined, { numeric: true, sensitivity: "base" });
+    return String(ax).localeCompare(String(bx), undefined, {
+      numeric: true,
+      sensitivity: "base",
+    });
   };
-
 
   // Derive sorted rows from viewData
   const sortedRows = useMemo(() => {
@@ -204,9 +280,6 @@ const ListDataView = ({ branch }) => {
     return copy;
   }, [viewData, sortKey, sortDir]);
 
-
-
-
   const toggleSort = (key) => {
     if (!key) return;
     // click same header to flip direction, new header resets to asc                 // inline-review
@@ -216,8 +289,7 @@ const ListDataView = ({ branch }) => {
     );
   };
 
-
-// end of sortable routines
+  // end of sortable routines
 
   // Download CSV respects current column visibility  schema-level CSV exclusions
   const handleDownloadCSV = () => {
@@ -225,7 +297,7 @@ const ListDataView = ({ branch }) => {
     if (!Array.isArray(viewData) || viewData.length === 0) return;
 
     // derive config
-    const collectionName = branch.replace('List ', '');
+    const collectionName = branch.replace("List ", "");
     const colSchema = CollectionSchemas?.[collectionName];
     const excludeCsv = new Set(colSchema?.csv?.exclude || []); // <- from schema
 
@@ -238,15 +310,15 @@ const ListDataView = ({ branch }) => {
     const lines = viewData.map((row) =>
       headers
         .map((h) => toCsvCell(renderValue(row[h], h))) // <- render formatting + escape (param removed)
-        .join(',')
+        .join(",")
     );
 
     // compose CSV (prepend header row)
-    const csv = [headers.join(','), ...lines].join('\n');
+    const csv = [headers.join(","), ...lines].join("\n");
 
     // trigger browser download
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const a = document.createElement('a');
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
     a.download = `${collectionName.toLowerCase()}_export.csv`; // consistent filename
     document.body.appendChild(a);
@@ -256,44 +328,18 @@ const ListDataView = ({ branch }) => {
     URL.revokeObjectURL(a.href);
   };
 
- // Fetch data from Firestore   
-    // - Use onSnapshot for real-time updates
-    useEffect(() => {
-    if (!db || !tenantId || !branch) {
-      setLoading(false);
-      return;
-    }
+  // Fetch data from Firestore
+  // - Use onSnapshot for real-time updates
+  // useEffect(() => {  STEVE THIS CODE was 2 listners fighting each other!!!
+  // 🔁 (Removed) The old subscribe effect lived here and fought the edit-mode effect.
 
-    // Construct the full path according to your security rules
-    const collectionPath = `artifacts/${
-      typeof __app_id !== "undefined" ? __app_id : "default-app-id"
-    }/tenants/${tenantId}/${branch.replace("List ", "").toLowerCase()}`;
-    const q = query(
-      collection(db, collectionPath),
-      where("tenantId", "==", tenantId)
-    );
-
-    const unsubscribe = onSnapshot(
-      q,
-      (querySnapshot) => {
-        const fetchedData = querySnapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-        }));
-        setData(fetchedData);
-        setLoading(false);
-      },
-      (error) => {
-        console.error("Error fetching data: ", error);
-        setLoading(false);
-      }
-    );
-
-    return () => unsubscribe();
-  }, [db, tenantId, branch]);
-
+  // 🎯 Re-introduce edit handler used by the ACTIONS column
+  // (line ~471 calls: onClick={() => handleEdit(item)} )
   const handleEdit = (item) => {
-    setEditItem(item);
+    console.log("ListDataView: edit click → entering edit mode", {
+      id: item?.id,
+    });
+    setEditItem(item); // this toggles the component from list/table view → edit form
   };
 
   const handleDelete = (item) => {
@@ -321,11 +367,9 @@ const ListDataView = ({ branch }) => {
   };
 
   const cancelDelete = () => {
-    setIsDeleteModalOpen(false);
-    setIsDeleteModalOpen(false);
+    setIsDeleteModalOpen(false); // single close call is enough
     setItemToDelete(null);
   };
-
 
   if (loading) {
     return <div className="text-center py-8">Loading...</div>;
@@ -342,11 +386,14 @@ const ListDataView = ({ branch }) => {
         entityLabel={branch}
         collectionName={collectionName}
         schema={CollectionSchemas?.[collectionName]}
-        initialDocId={editItem.id}      /* open the exact row the user clicked */           // inline-review
+        initialDocId={editItem.id} /* open the exact row the user clicked */
+        // ✅ Let the Change screen bring us back to the list without extra clicks
+        onCancel={() => setEditItem(null)} // Cancel button returns to list
+        onSaved={() => setEditItem(null)} // After save, return to list (optional UX)
+        key={`edit:${collectionName}:${editItem.id}`} // force a clean editor mount per row
       />
     );
   }
-
 
   if (viewData.length === 0) {
     return (
@@ -364,7 +411,9 @@ const ListDataView = ({ branch }) => {
   // Using `viewData` keeps headers aligned with the visible/derived columns.
   const headers =
     viewData.length > 0
-      ? Object.keys(viewData[0]).filter((key) => key !== "id" && key !== "tenantId")
+      ? Object.keys(viewData[0]).filter(
+          (key) => key !== "id" && key !== "tenantId"
+        )
       : [];
 
   return (
@@ -388,7 +437,6 @@ const ListDataView = ({ branch }) => {
           {/* Sticky header so labels remain visible while scrolling */}
           <thead className="bg-gray-100">
             <tr>
-
               {headers.map((header) => {
                 const isActive = sortKey === header;
                 const label = header.replace(/([A-Z])/g, " $1").trim();
@@ -420,7 +468,7 @@ const ListDataView = ({ branch }) => {
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-gray-200">
-             {sortedRows.map((item) => (
+            {sortedRows.map((item) => (
               <tr key={item.id} className="hover:bg-gray-100 transition-colors">
                 {headers.map((header) => (
                   <td

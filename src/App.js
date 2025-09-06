@@ -1,6 +1,5 @@
 import React, { useContext, useState } from "react"; // inline-review: drop unused useEffect to fix lint
-import { signOut } from "firebase/auth";            // inline-review: import only what is used
-
+import { signOut } from "firebase/auth"; // inline-review: import only what is used
 
 import { FirebaseContext } from "./AppWrapper";
 import Sidebar from "./Sidebar";
@@ -9,9 +8,8 @@ import { List } from "lucide-react";
 import { Clipboard } from "lucide-react";
 import ListDataView from "./ListDataView";
 import { getCollectionFromBranch } from "./collectionMap"; // centralize branch→collection mapping
-import ChangeEntity from "./ChangeEntity";                 // ensure component is registered in bundle           // inline-review
-import { CollectionSchemas } from "./DataSchemas";         // will now resolve via 'customers' OR 'Customers'    // inline-review
-
+import ChangeEntity from "./ChangeEntity"; // ensure component is registered in bundle           // inline-review
+import { CollectionSchemas } from "./DataSchemas"; // will now resolve via 'customers' OR 'Customers'    // inline-review
 
 // This file is the main application component that renders the sidebar, header, and main content area.
 
@@ -20,11 +18,25 @@ const navigation = [
     name: "Business",
     subBranches: [
       // EDIT: add Change <Entity> across branches so the pattern scales to 10–20 tables
-      { name: "Customers", subBranches: ["Add Customer", "Change Customer", "List Customers"] },
-      { name: "Employees", subBranches: ["Add Employee", "Change Employee", "List Employees"] },
-      { name: "Assets", subBranches: ["Add Asset", "Change Asset", "List Assets"] },
-      { name: "Finances", 
-       subBranches: ["Add Transaction", "Change Transaction", "List Transactions"],
+      {
+        name: "Customers",
+        subBranches: ["Add Customer", "Change Customer", "List Customers"],
+      },
+      {
+        name: "Employees",
+        subBranches: ["Add Employee", "Change Employee", "List Employees"],
+      },
+      {
+        name: "Assets",
+        subBranches: ["Add Asset", "Change Asset", "List Assets"],
+      },
+      {
+        name: "Finances",
+        subBranches: [
+          "Add Transaction",
+          "Change Transaction",
+          "List Transactions",
+        ],
       },
     ],
   },
@@ -35,11 +47,16 @@ const App = () => {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [selectedBranch, setSelectedBranch] = useState("Customers");
   const [selectedSubBranch, setSelectedSubBranch] = useState("Add Customer");
+  const [navTick, setNavTick] = useState(0); // increments on every sidebar click (even if same target)
 
   const handleNavigationClick = (branch, subBranch) => {
+    // Trace and tick: we bump navTick even if user re-clicks the same item (e.g., List Customers → List Customers),
+    // so children can react (ListDataView clears edit mode & re-subscribes).                                 // inline-review
+    console.debug("[nav] click", { branch, subBranch });
     setSelectedBranch(branch);
     setSelectedSubBranch(subBranch);
-    setSidebarOpen(false); // Close sidebar on mobile
+    setNavTick((n) => n + 1); // <- the important part                                           // inline-review
+    setSidebarOpen(false);
   };
 
   const handleSignOut = async () => {
@@ -75,7 +92,9 @@ const App = () => {
 
       {/* Content column (reserve space for fixed sidebar on lg+). 
          `min-w-0` prevents this flex child from forcing page-level horizontal scroll. */}
-      <div className="flex-1 flex flex-col lg:ml-64 min-w-0">       {/* Keep header OUTSIDE any horizontal scroller so it never slides left/right */}
+      <div className="flex-1 flex flex-col lg:ml-64 min-w-0">
+        {" "}
+        {/* Keep header OUTSIDE any horizontal scroller so it never slides left/right */}
         <header className="sticky top-0 z-40 flex items-center justify-between p-4 bg-blue-600 text-white shadow-md">
           {/* sticky header remains visible on vertical scroll; horizontal scroll is moved below */}
 
@@ -105,12 +124,13 @@ const App = () => {
             </button>
           </div>
         </header>
-
         {/* Main Content Area */}
-        <main className="flex-1 p-6 overflow-y-auto min-w-0">{/* min-w-0 keeps inner scroller authoritative */}
-         {/* Constrain horizontal scrolling to this inner wrapper (NOT the whole page) */}
-         <div className="overflow-x-auto bg-gray-100">{/* bg matches page bg while scrolling horizontally */}
-           <h2 className="text-3xl font-bold text-gray-800 mb-6">
+        <main className="flex-1 p-6 overflow-y-auto min-w-0">
+          {/* min-w-0 keeps inner scroller authoritative */}
+          {/* Constrain horizontal scrolling to this inner wrapper (NOT the whole page) */}
+          <div className="overflow-x-auto bg-gray-100">
+            {/* bg matches page bg while scrolling horizontally */}
+            <h2 className="text-3xl font-bold text-gray-800 mb-6">
               {selectedBranch} {" > "} {selectedSubBranch}
             </h2>
             <div className="bg-white p-6 rounded-lg shadow-xl">
@@ -121,33 +141,40 @@ const App = () => {
                   // Make forms generic across 10–20 tables by passing the collection id explicitly.
                   // ListDataView/ChangeEntity will receive the same id for consistent APIs.
                   collectionName={getCollectionFromBranch(selectedBranch)} // ← e.g., "customers"
-                 onSave={() => {
+                  onSave={() => {
                     // You can add a success message or navigate here
                     console.log("Data saved!");
                   }}
                 />
               )}
 
-
               {/* EDIT: Generic Change (edit) screen across all entities.
                  - Locks immutable fields (e.g., customerNumber) visually & in payload
                  - Shows standardized Audit panel (createdAt/By + updatedAt/By) */}
               {selectedSubBranch.startsWith("Change ") && (
                 <ChangeEntity
-                  entityLabel={selectedBranch}                                    // UI label "Customers"
-                  collectionName={getCollectionFromBranch(selectedBranch)}        // e.g., "customers"
-                  schema={CollectionSchemas?.[getCollectionFromBranch(selectedBranch)]} // pass per-entity schema
+                  entityLabel={selectedBranch} // UI label "Customers"
+                  collectionName={getCollectionFromBranch(selectedBranch)} // e.g., "customers"
+                  schema={
+                    CollectionSchemas?.[getCollectionFromBranch(selectedBranch)]
+                  } // pass per-entity schema
+                  onSaveAndClose={() =>
+                    handleNavigationClick(
+                      selectedBranch,
+                      "List " + selectedBranch
+                    )
+                  }
                 />
               )}
 
               {/* ✅ NEW: Code to show the list view */}
               {selectedSubBranch.includes("List") && (
                 <ListDataView
-                  branch={selectedBranch}                             // keep for backwards‑compat
-                  collectionName={getCollectionFromBranch(selectedBranch)} // source of truth
+                  key={`${selectedBranch}:${selectedSubBranch}`} // remounts when target changes
+                  branch={selectedBranch}
+                  navTick={navTick} // also updates when user re-presses the SAME list item
                 />
-             )}
-
+              )}
               {/* You would add other components here for listing data */}
             </div>
           </div>

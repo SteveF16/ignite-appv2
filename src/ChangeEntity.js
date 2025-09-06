@@ -27,13 +27,17 @@ const DEFAULT_SEARCH_KEYS = [
   "country",
 ]; // align with customers schema  // inline-review
 const COMMON_IMMUTABLE = ["tenantId", "appId", "createdAt", "createdBy"]; // baseline immutables across all collections
+const EXCLUDE_ON_CHANGE = new Set(["createdAt", "updatedAt"]); // fields to exclude from onChange (e.g. timestamps)
 
-export default function ChangeEntity({ 
-  entityLabel, 
-  collectionName, 
+export default function ChangeEntity({
+  entityLabel,
+  collectionName,
   schema,
-  initialDocId           // ← NEW: allow deep‑linking a specific doc from List view  
-  }) {
+  initialDocId, // ← NEW: allow deep‑linking a specific doc from List view
+  onSaveAndClose, // legacy callback (kept for backward compatibility)
+  onCancel, // optional: parent-provided "go back to list" callback
+  onSaved, // optional: parent-provided "after save" callback
+}) {
   const {
     db,
     tenantId,
@@ -59,24 +63,26 @@ export default function ChangeEntity({
     [collectionImmutable]
   );
 
-  const defaultSort =
-    schema?.list?.defaultSort || { key: searchKeys[0] || "name1", dir: "asc" }; // now used to sort list
-
+  const defaultSort = schema?.list?.defaultSort || {
+    key: searchKeys[0] || "name1",
+    dir: "asc",
+  }; // now used to sort list
 
   // load when a record is chosen (or deep‑linked via initialDocId)
   useEffect(() => {
-    const idToLoad = initialDocId || selectedId;               // prefer deep‑link on first load  // inline-review
+    const idToLoad = initialDocId || selectedId; // prefer deep‑link on first load  // inline-review
     if (!idToLoad) return;
     let cancelled = false;
     (async () => {
       try {
         setLoading(true);
-        const app = typeof __app_id !== "undefined" ? __app_id : "default-app-id";
+        const app =
+          typeof __app_id !== "undefined" ? __app_id : "default-app-id";
         const fullPath = `artifacts/${app}/tenants/${tenantId}/${collectionName.toLowerCase()}`;
         const snap = await getDoc(doc(db, fullPath, idToLoad)); // use tenant-scoped path
         if (!cancelled) {
           setForm(snap.exists() ? snap.data() : {});
-          if (initialDocId) setSelectedId(initialDocId);       // reflect in selector            // inline-review
+          if (initialDocId) setSelectedId(initialDocId); // reflect in selector            // inline-review
         }
       } catch (e) {
         if (!cancelled) setMessage(String(e?.message || e));
@@ -89,18 +95,23 @@ export default function ChangeEntity({
     };
   }, [db, appId, tenantId, collectionName, selectedId, initialDocId]);
 
-
   // Fetch the first page (<=100) for the picker
   useEffect(() => {
     let cancelled = false;
     (async () => {
       if (!db || !tenantId || !collectionName) return;
       try {
-        const app = typeof __app_id !== "undefined" ? __app_id : "default-app-id";
+        const app =
+          typeof __app_id !== "undefined" ? __app_id : "default-app-id";
         const fullPath = `artifacts/${app}/tenants/${tenantId}/${collectionName.toLowerCase()}`;
         const constraints = [limit(100)];
         if (defaultSort?.key) {
-          constraints.unshift(orderBy(defaultSort.key, defaultSort.dir === "desc" ? "desc" : "asc"));
+          constraints.unshift(
+            orderBy(
+              defaultSort.key,
+              defaultSort.dir === "desc" ? "desc" : "asc"
+            )
+          );
         }
         const q = query(collection(db, fullPath), ...constraints);
         const snap = await getDocs(q);
@@ -115,7 +126,6 @@ export default function ChangeEntity({
       cancelled = true;
     };
   }, [db, tenantId, collectionName, defaultSort]);
-
 
   // ──────────────────────────────────────────────────────────────────────────
   // Dot‑path helpers so nested schema paths (e.g. "billing.address.line1")
@@ -141,7 +151,8 @@ export default function ChangeEntity({
   }
 
   // Consistent audit time rendering (supports Firestore Timestamp | Date | string)
-  function formatWhen(v) {   // tolerate bad historic data (e.g., "steve")
+  function formatWhen(v) {
+    // tolerate bad historic data (e.g., "steve")
     try {
       if (!v) return "";
       if (typeof v?.toDate === "function") return v.toDate().toLocaleString();
@@ -150,7 +161,7 @@ export default function ChangeEntity({
       if (typeof v === "string") return new Date(v).toLocaleString();
       return String(v);
     } catch {
-      return "";  // show blank instead of "Invalid Date"
+      return ""; // show blank instead of "Invalid Date"
     }
   }
 
@@ -172,7 +183,8 @@ export default function ChangeEntity({
     setMessage("");
     if (!id) return;
     try {
-      const app = typeof __app_id !== "undefined" ? __app_id : appId || "default-app-id";
+      const app =
+        typeof __app_id !== "undefined" ? __app_id : appId || "default-app-id";
       const fullPath = `artifacts/${app}/tenants/${tenantId}/${collectionName.toLowerCase()}`;
       const ref = doc(db, fullPath, id);
       const snap = await getDoc(ref);
@@ -191,8 +203,8 @@ export default function ChangeEntity({
   function onChangeField(key, value) {
     // write by dot‑path so nested fields (e.g. "billing.city") edit correctly   // inline-review
     setForm((prev) => {
-      const next = { ...prev }; // inline-review
-      setByPath(next, key, value); // inline-review
+      const next = { ...prev }; // make a shallow copy of state
+      setByPath(next, key, value); // dot-path write ensures e.g. "credit.onHold" is updated
       return next;
     });
   }
@@ -202,29 +214,45 @@ export default function ChangeEntity({
     setSaving(true);
     setMessage("");
     try {
-      
-      const payload = { ...form };
+      // Make a deep copy so we can safely mutate before sending to Firestore
+      const payload = JSON.parse(JSON.stringify(form)); // keeps nested updates like credit.onHold    // inline-review
 
-      // Always stamp audit on update using server time & current actor             
+      // Strip immutables **first** so our audit stamps (below) don't get deleted.                     // inline-review
+      // Never strip updatedAt/updatedBy even if a schema accidentally marks them immutable.           // inline-review
+      for (const k of allImmutable) {
+        if (k === "updatedAt" || k === "updatedBy") continue;
+        delete payload[k];
+      }
+      for (const f of fields) {
+        const k = f?.path || f?.key || f?.name;
+        if (!k) continue;
+        if (k === "updatedAt" || k === "updatedBy") continue; // guard stamps                           // inline-review
+        if (f?.immutable) delete payload[k];
+      }
+
+      // Now stamp audit using server time & current actor                                              // inline-review
       payload.updatedAt = serverTimestamp();
       payload.updatedBy = user?.email || user?.uid || "unknown";
 
-      // Strip immutable fields (created*, tenant/app ids) from outgoing payload    
-      for (const k of allImmutable) delete payload[k];
-      for (const f of fields) {
-        const k = f?.path || f?.key || f?.name;
-        if (k && f?.immutable) delete payload[k];
-      }
-      
-      const ref = doc(db, `artifacts/${appId}/tenants/${tenantId}/${collectionName.toLowerCase()}`,
-                   selectedId);
+      // Reference the document to update
+      const ref = doc(
+        db,
+        `artifacts/${appId}/tenants/${tenantId}/${collectionName.toLowerCase()}`,
+        selectedId
+      );
 
       // Update the document in Firestore
       await updateDoc(ref, payload);
 
-      
       // Update local state to reflect changes
       setMessage(`${entityLabel.slice(0, -1)} updated successfully.`);
+
+      // 🔔 Navigation hooks — prefer new, fall back to legacy
+      if (typeof onSaved === "function") {
+        onSaved(); // e.g., ListDataView: return to list on save
+      } else if (typeof onSaveAndClose === "function") {
+        onSaveAndClose(); // legacy path (App.js Change → List)
+      }
     } catch (e) {
       console.error("save failed", e);
       setMessage("Error saving changes.");
@@ -233,10 +261,21 @@ export default function ChangeEntity({
     }
   }
 
+  // 🚪 Cancel handler — avoid name collision with the `onCancel` prop by using `handleCancel`  // inline-review
+  const handleCancel = () => {
+    console.log("ChangeEntity: Cancel pressed → navigate back to list");
+    if (typeof onCancel === "function") {
+      onCancel(); // preferred new prop (e.g., from ListDataView)         // inline-review
+    } else if (typeof onSaveAndClose === "function") {
+      onSaveAndClose(); // fallback for existing App.js integration             // inline-review
+    }
+  };
+
   function renderField(f) {
     // render a single input
     const key = f.path || f.key || f.name; // prefer explicit path
     if (!key) return null;
+    if (EXCLUDE_ON_CHANGE.has(key) || f.hideOnChange) return null;
     const label = f.label || key;
     const type = f.type || "text";
 
@@ -244,7 +283,262 @@ export default function ChangeEntity({
     if (f.edit === false) return null;
 
     const immutable = allImmutable.includes(key) || !!f.immutable; // lock via schema or global list
-    const value = getByPath(form, key) ?? "";
+    // ✅ For checkboxes we must derive a boolean, not a string; other inputs keep prior behavior.
+    const value =
+      type === "checkbox" ? !!getByPath(form, key) : getByPath(form, key) ?? "";
+
+    // dynamic options for select (countries/currencies) via Intl with fallback
+    const getCountryOptions = () => {
+      try {
+        const codes =
+          typeof Intl.supportedValuesOf === "function"
+            ? Intl.supportedValuesOf("region")
+            : ["US", "CA", "GB", "DE", "FR", "AU", "JP"];
+        const dn = new Intl.DisplayNames([navigator.language || "en"], {
+          type: "region",
+        });
+        return codes.map((c) => ({
+          value: c,
+          label: `${c} — ${dn.of(c) || c}`,
+        }));
+      } catch {
+        return [
+          { value: "US", label: "US — United States" },
+          { value: "CA", label: "CA — Canada" },
+        ];
+      }
+    };
+    const getCurrencyOptions = () => {
+      try {
+        const codes =
+          typeof Intl.supportedValuesOf === "function"
+            ? Intl.supportedValuesOf("currency")
+            : ["USD", "EUR", "GBP", "JPY", "AUD", "CAD"];
+        const dn = new Intl.DisplayNames([navigator.language || "en"], {
+          type: "currency",
+        });
+        return codes.map((c) => ({
+          value: c,
+          label: `${c} — ${dn.of(c) || c}`,
+        }));
+      } catch {
+        return [
+          { value: "USD", label: "USD — US Dollar" },
+          { value: "EUR", label: "EUR — Euro" },
+        ];
+      }
+    };
+
+    if (type === "select") {
+      // ✅ FIX: On *Change Employee* the Status select was blank because this component
+      // only populated country/currency. Pull enum from the schema first.                 // inline-review
+      const enumFromField = Array.isArray(f.enum) ? f.enum : undefined; // can be provided inline
+      const enumFromSchema = (schema.fields || []).find(
+        (ff) => (ff.path || ff.key || ff.name) === key
+      )?.enum; // Employees.status enum
+      const normalizedEnum =
+        (enumFromField && enumFromField.length
+          ? enumFromField
+          : enumFromSchema) || [];
+      const source = normalizedEnum.length
+        ? normalizedEnum.map((v) => ({ value: String(v), label: String(v) })) // enum → options
+        : key.endsWith(".country")
+        ? getCountryOptions()
+        : key === "credit.currency"
+        ? getCurrencyOptions()
+        : [];
+
+      return (
+        <div key={key} className="mb-4">
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            {label}
+          </label>
+          <select
+            className={`w-full rounded-md border border-gray-300 p-2 ${
+              immutable ? "readonly-field" : ""
+            }`}
+            value={value}
+            onChange={(e) => onChangeField(key, e.target.value)}
+            disabled={immutable}
+            readOnly={immutable}
+          >
+            <option value="">{""}</option>
+            {source.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+          {immutable && (
+            <p className="text-xs text-gray-500 mt-1">
+              This field is immutable.
+            </p>
+          )}
+        </div>
+      );
+    }
+
+    // ✅ NEW: proper checkbox renderer so booleans persist as true/false
+    if (type === "checkbox") {
+      return (
+        <div key={key} className="mb-4">
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            {label}
+          </label>
+          <input
+            type="checkbox"
+            className="h-4 w-4"
+            checked={!!value}
+            onChange={(e) => onChangeField(key, e.target.checked)} // writes boolean to e.g. credit.onHold
+            disabled={immutable}
+            readOnly={immutable}
+          />
+          {immutable && (
+            <p className="text-xs text-gray-500 mt-1">
+              This field is immutable.
+            </p>
+          )}
+        </div>
+      );
+    }
+
+    // Amount preview for Credit Limit (formatter that won't fight user typing)
+    const currencyCode = getByPath(form, "credit.currency") || "USD";
+    const previewCurrency = (n) => {
+      try {
+        if (n === "" || n == null || Number.isNaN(Number(n))) return "";
+        return new Intl.NumberFormat(navigator.language || "en-US", {
+          style: "currency",
+          currency: currencyCode,
+        }).format(Number(n));
+      } catch {
+        return `${currencyCode} ${n ?? ""}`;
+      }
+    };
+
+    if (key === "credit.limit") {
+      const n = value ?? ""; // FIX: use the field's current value (val was undefined)  // inline-review
+      return (
+        <div key={key} className="mb-4">
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            {label}
+          </label>
+          <div className="flex items-center gap-3">
+            <input
+              className={`w-full rounded-md border border-gray-300 p-2 ${
+                immutable ? "readonly-field" : ""
+              }`}
+              type="number"
+              step="0.01"
+              value={n}
+              onChange={(e) =>
+                onChangeField(
+                  key,
+                  e.target.value === "" ? "" : Number(e.target.value)
+                )
+              }
+              disabled={immutable}
+              readOnly={immutable}
+            />
+            <span className="text-sm text-gray-600 shrink-0">
+              ≈ {previewCurrency(n)} {currencyCode}
+            </span>
+          </div>
+          {immutable && (
+            <p className="text-xs text-gray-500 mt-1">
+              This field is immutable.
+            </p>
+          )}
+        </div>
+      );
+    }
+
+    // “State/Region”: when US -> dropdown of states; otherwise keep free-form input.                   // inline-review
+    if (key.endsWith(".state")) {
+      const selectedCountry = getByPath(form, "billing.address.country");
+      const US_STATES = [
+        "AL",
+        "AK",
+        "AZ",
+        "AR",
+        "CA",
+        "CO",
+        "CT",
+        "DE",
+        "FL",
+        "GA",
+        "HI",
+        "ID",
+        "IL",
+        "IN",
+        "IA",
+        "KS",
+        "KY",
+        "LA",
+        "ME",
+        "MD",
+        "MA",
+        "MI",
+        "MN",
+        "MS",
+        "MO",
+        "MT",
+        "NE",
+        "NV",
+        "NH",
+        "NJ",
+        "NM",
+        "NY",
+        "NC",
+        "ND",
+        "OH",
+        "OK",
+        "OR",
+        "PA",
+        "RI",
+        "SC",
+        "SD",
+        "TN",
+        "TX",
+        "UT",
+        "VT",
+        "VA",
+        "WA",
+        "WV",
+        "WI",
+        "WY",
+      ];
+      if (selectedCountry === "US") {
+        return (
+          <div key={key} className="mb-4">
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              {label}
+            </label>
+            <select
+              className={`w-full rounded-md border border-gray-300 p-2 ${
+                immutable ? "readonly-field" : ""
+              }`}
+              value={value ?? ""}
+              onChange={(e) => onChangeField(key, e.target.value || "")}
+              disabled={immutable}
+            >
+              <option value="">{""}</option>
+              {US_STATES.map((st) => (
+                <option key={st} value={st}>
+                  {st}
+                </option>
+              ))}
+            </select>
+            {immutable && (
+              <p className="text-xs text-gray-500 mt-1">
+                This field is immutable.
+              </p>
+            )}
+          </div>
+        );
+      }
+      // non-US: fall through to default renderer below (text)
+    }
 
     if (type === "textarea") {
       return (
@@ -318,7 +612,17 @@ export default function ChangeEntity({
       .filter(Boolean);
     const seen = new Set(declared);
     const extra = (primitiveFields || []).filter((f) => !seen.has(f.key));
-    return [...(fields || []), ...extra];
+    // Ensure 'status' carries the enum from schema even if discovered via primitives.     // inline-review
+    const stitched = [...(fields || []), ...extra].map((f) => {
+      if ((f.path || f.key || f.name) !== "status") return f;
+      const enumFromSchema = (schema.fields || []).find(
+        (ff) => (ff.path || ff.key || ff.name) === "status"
+      )?.enum;
+      return enumFromSchema?.length
+        ? { ...f, type: "select", enum: enumFromSchema }
+        : f;
+    });
+    return stitched;
   }, [fields, primitiveFields]);
 
   return (
@@ -349,7 +653,7 @@ export default function ChangeEntity({
             className="w-full rounded-md border border-gray-300 p-2"
             value={selectedId}
             onChange={(e) => loadOne(e.target.value)}
-            disabled={loading || !!initialDocId}     /* lock when deep‑linked */     
+            disabled={loading || !!initialDocId} /* lock when deep‑linked */
           >
             <option value="">— Choose —</option>
             {filtered.map((it) => (
@@ -416,6 +720,14 @@ export default function ChangeEntity({
             >
               {saving ? "Saving..." : "Save Changes"}
             </button>
+
+            <button
+              onClick={handleCancel} // unified cancel path (uses new prop or legacy fallback)
+              className="mt-2 w-full h-10 px-4 rounded-lg bg-gray-200 text-gray-800 hover:bg-gray-300"
+            >
+              Cancel
+            </button>
+
             {message && (
               <div className="mt-3 text-sm text-gray-700">{message}</div>
             )}
