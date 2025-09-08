@@ -11,7 +11,5 @@
   "src/collectionNames.js",
   "src/navMap.js",
 
-  "src/invoice/TemplateDesigner.js",
-  "src/invoice/InvoiceEditor.js",
-  "src/invoice/pdf/makeInvoicePdf.js"
+  "src/invoice"
 ]
