@@ -1,0 +1,17 @@
+[
+  "src/App.js",
+  "src/Sidebar.js",
+  "src/ListDataView.js",
+  "src/DataEntryForm.js",
+  "src/ChangeEntity.js",
+  "src/DataSchemas.js",
+  "src/index.js",
+  "src/Register.js",
+
+  "src/collectionNames.js",
+  "src/navMap.js",
+
+  "src/invoice/TemplateDesigner.js",
+  "src/invoice/InvoiceEditor.js",
+  "src/invoice/pdf/makeInvoicePdf.js"
+]
