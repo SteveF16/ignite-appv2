@@ -1,37 +1,37 @@
 {
-  "_updatedAt": "2025-09-06T19:00:52.520Z",
+  "_updatedAt": "2025-09-08T18:18:11.098Z",
   "files": {
     "src/DataSchemas.js": {
-      "hash": "241c442d9dd1a7d57b6834c2ae237f36e6693808b8e7d92dab9b06a9b0ff0512",
-      "ts": "2025-09-06T19:00:52.520Z"
+      "hash": "11713a873299de101981f4f7294413295e83f38334d2e6355292a4bc5f6e9155",
+      "ts": "2025-09-08T18:18:11.098Z"
     },
     "src/App.js": {
-      "hash": "49843d5162b0abe5f3e027ff9b7304f53ebf3126b391f68560c2bece6c5cf771",
-      "ts": "2025-09-06T19:00:52.520Z"
+      "hash": "ee44b7ce6b3f68088e4a3ae664e4ab304d40357a26728c99c6a38c3495400357",
+      "ts": "2025-09-08T18:18:11.098Z"
     },
     "src/Sidebar.js": {
-      "hash": "f8d014aa8e59a2d6ba2eb318517df371131a78792efcd5eb0a7b8b596bfa8992",
-      "ts": "2025-09-06T19:00:52.520Z"
+      "hash": "81ee70b1189a1c75eca129dac9c49d7c5946128462203b793996ed9f57013130",
+      "ts": "2025-09-08T18:18:11.098Z"
     },
     "src/DataEntryForm.js": {
-      "hash": "535a034698f1bc3d040c9f8abfff4bd79c774ebd7c4877110a0d6b735a1ea9c9",
-      "ts": "2025-09-06T19:00:52.520Z"
+      "hash": "028632a7e72da1a8bdbe8803e7418da01be2c63b93c636d282207b0289051b98",
+      "ts": "2025-09-08T18:18:11.098Z"
     },
     "src/ChangeEntity.js": {
-      "hash": "59b7f19ceb9ebed1624ab43759415a1c912cef261b085486328a0b4ee384c7d3",
-      "ts": "2025-09-06T19:00:52.520Z"
+      "hash": "9c0ee0b06adaa53f25fea1b0433ee5447a0f042aa1f72257158dfdaff2470873",
+      "ts": "2025-09-08T18:18:11.098Z"
     },
     "src/ListDataView.js": {
-      "hash": "921a8f9e4517adb4777c8325236e87d305738935e3e790f088612309e32f5ef4",
-      "ts": "2025-09-06T19:00:52.520Z"
+      "hash": "e828c0ac6411b762ee51bfc4a8f1c7469f7a36ceb14e0bbc28507232efa845d0",
+      "ts": "2025-09-08T18:18:11.098Z"
     },
     "src/index.js": {
       "hash": "4784d60b68c19087286d0775148f17f68e54283d4ecf49e16daa3ab092c10fee",
-      "ts": "2025-09-06T19:00:52.520Z"
+      "ts": "2025-09-08T18:18:11.098Z"
     },
     "src/Register.js": {
       "hash": "05cddd0a02dffbf0781f3a70b37f27385fac823d13b26c6e9f7682611a7f2604",
-      "ts": "2025-09-06T19:00:52.520Z"
+      "ts": "2025-09-08T18:18:11.098Z"
     }
   }
 }
