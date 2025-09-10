@@ -1,57 +1,61 @@
 {
-  "_updatedAt": "2025-09-08T23:47:17.536Z",
+  "_updatedAt": "2025-09-10T14:30:50.282Z",
   "files": {
     "src/DataSchemas.js": {
       "hash": "11713a873299de101981f4f7294413295e83f38334d2e6355292a4bc5f6e9155",
-      "ts": "2025-09-08T23:47:17.536Z"
+      "ts": "2025-09-10T14:30:50.282Z"
     },
     "src/App.js": {
       "hash": "c4b3ada02b9094d8ea399e95f3e220ea5b191afdb742d63ddddf452e8d31d030",
-      "ts": "2025-09-08T23:47:17.536Z"
+      "ts": "2025-09-10T14:30:50.282Z"
     },
     "src/Sidebar.js": {
       "hash": "81ee70b1189a1c75eca129dac9c49d7c5946128462203b793996ed9f57013130",
-      "ts": "2025-09-08T23:47:17.536Z"
+      "ts": "2025-09-10T14:30:50.282Z"
     },
     "src/DataEntryForm.js": {
-      "hash": "028632a7e72da1a8bdbe8803e7418da01be2c63b93c636d282207b0289051b98",
-      "ts": "2025-09-08T23:47:17.536Z"
+      "hash": "84142a36474295992e4517aaee0c79d1a446a10bd1256c2b4bb52ea3b668c2c0",
+      "ts": "2025-09-10T14:30:50.282Z"
     },
     "src/ChangeEntity.js": {
-      "hash": "9c0ee0b06adaa53f25fea1b0433ee5447a0f042aa1f72257158dfdaff2470873",
-      "ts": "2025-09-08T23:47:17.536Z"
+      "hash": "5fc2b2ffa64fdc22cb25a7304429d3a1760d43fb60f92d2c8d96e7e02145968a",
+      "ts": "2025-09-10T14:30:50.282Z"
     },
     "src/ListDataView.js": {
-      "hash": "ac8477bd6c917f90324850c5531ec8cf15eb128e637c3f05b73e55873f99827e",
-      "ts": "2025-09-08T23:47:17.536Z"
+      "hash": "e92bebe75aff7384da3f07209a22ab33495001ddcc7e4aa033480222f7e26ac5",
+      "ts": "2025-09-10T14:30:50.282Z"
     },
     "src/index.js": {
       "hash": "4784d60b68c19087286d0775148f17f68e54283d4ecf49e16daa3ab092c10fee",
-      "ts": "2025-09-08T23:47:17.536Z"
+      "ts": "2025-09-10T14:30:50.282Z"
     },
     "src/Register.js": {
       "hash": "05cddd0a02dffbf0781f3a70b37f27385fac823d13b26c6e9f7682611a7f2604",
-      "ts": "2025-09-08T23:47:17.536Z"
+      "ts": "2025-09-10T14:30:50.282Z"
     },
     "src/collectionNames.js": {
       "hash": "f765a6e4313890e5d869f8a664515fba17c1c2a7d628a5aef995f029da43c550",
-      "ts": "2025-09-08T23:47:17.536Z"
+      "ts": "2025-09-10T14:30:50.282Z"
     },
     "src/navMap.js": {
       "hash": "b0fd41ebd20f9abe28fafd988e426201d274e02f84f85de7f719001fce48c52e",
-      "ts": "2025-09-08T23:47:17.536Z"
+      "ts": "2025-09-10T14:30:50.282Z"
     },
     "src/invoice/TemplateDesigner.js": {
-      "hash": "1bffb79a3dd0497074f913d8f9662c7d458570eedd4304bd232e0664d841e882",
-      "ts": "2025-09-08T23:47:17.536Z"
+      "hash": "e7fbcdb310f638155b50b0c2fb30521719c44a76ccd3ade8f5b78d3c2cefacf0",
+      "ts": "2025-09-10T14:30:50.282Z"
     },
     "src/invoice/InvoiceEditor.js": {
-      "hash": "2b74eeed1a6a4e3629ff07c4b79bea2e3cf57ff401fb9c6346d4118ea4b181c9",
-      "ts": "2025-09-08T23:47:17.536Z"
+      "hash": "85529df2d524f36bba464fb2dbbfee17071833eec40aa017e5fb30ece11ce0a3",
+      "ts": "2025-09-10T14:30:50.282Z"
     },
     "src/invoice/pdf/makeInvoicePdf.js": {
       "hash": "4b2deef810b9ad1f2f72b97aff80fda7518abed803452ca057bbd888304daef4",
-      "ts": "2025-09-08T23:47:17.536Z"
+      "ts": "2025-09-10T14:30:50.282Z"
+    },
+    "src/IgniteConfig.js": {
+      "hash": "6a248fd0d0460f43afb7279b3afab0338232914f17b5744f78d73fab6292a9a9",
+      "ts": "2025-09-10T14:30:50.282Z"
     }
   }
 }
