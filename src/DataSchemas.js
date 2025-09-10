@@ -293,6 +293,157 @@ const CustomersSchema = {
 export const CollectionSchemas = {
   customers: CustomersSchema, // lower-case alias used by code paths
   Customers: CustomersSchema, // Title-case alias for compatibility
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Invoices (data instances) — values are mostly driven by a chosen template
+  // Audit fields stay immutable; business fields are dynamic via template.            // inline-review
+  Invoices: {
+    label: "Invoices",
+    collection: "invoices",
+    list: { defaultSort: { key: "createdAt", dir: "desc" } },
+    meta: { immutable: ["tenantId", "appId", "createdAt", "createdBy"] },
+    fields: [
+      {
+        path: "templateId",
+        label: "Template",
+        type: "text",
+        required: true,
+        immutable: true,
+      },
+      {
+        path: "invoiceNumber",
+        label: "Invoice #",
+        type: "text",
+        required: true,
+      },
+      {
+        path: "customer.name",
+        label: "Bill To: Name",
+        type: "text",
+        required: true,
+      },
+      { path: "customer.email", label: "Bill To: Email", type: "text" },
+      { path: "issueDate", label: "Issue Date", type: "date", required: true },
+      { path: "dueDate", label: "Due Date", type: "date", required: true },
+      // Dynamic payload slots written by the editor (do not render in generic form)    // inline-review
+      {
+        path: "fields",
+        label: "Dynamic Fields",
+        type: "object",
+        hideOnChange: true,
+        immutable: false,
+      },
+      {
+        path: "lineItems",
+        label: "Line Items",
+        type: "object",
+        hideOnChange: true,
+        immutable: false,
+      },
+      { path: "currency", label: "Currency", type: "text", required: true },
+      { path: "subTotal", label: "Subtotal", type: "number" },
+      { path: "taxTotal", label: "Tax", type: "number" },
+      { path: "grandTotal", label: "Total", type: "number" },
+      {
+        path: "pdfUrl",
+        label: "PDF URL",
+        type: "text",
+        immutable: true,
+        hideOnChange: true,
+      },
+      // audit
+      {
+        path: "createdAt",
+        type: "date",
+        label: "Created At",
+        immutable: true,
+        hideOnChange: true,
+      },
+      {
+        path: "createdBy",
+        type: "text",
+        label: "Created By",
+        immutable: true,
+        hideOnChange: true,
+      },
+      {
+        path: "updatedAt",
+        type: "date",
+        label: "Updated At",
+        immutable: true,
+        hideOnChange: true,
+      },
+      {
+        path: "updatedBy",
+        type: "text",
+        label: "Updated By",
+        immutable: true,
+        hideOnChange: true,
+      },
+    ],
+  },
+
+  // InvoiceTemplates (designer) — defines dynamic fields, line item columns, header/footer, etc.      // inline-review
+  InvoiceTemplates: {
+    label: "Invoice Templates",
+    collection: "invoiceTemplates",
+    list: { defaultSort: { key: "name", dir: "asc" } },
+    meta: { immutable: ["tenantId", "appId", "createdAt", "createdBy"] },
+    fields: [
+      { path: "name", label: "Template Name", type: "text", required: true },
+      {
+        path: "currency",
+        label: "Default Currency",
+        type: "text",
+        required: true,
+      },
+      { path: "header.title", label: "Header Title", type: "text" },
+      { path: "header.logoUrl", label: "Logo URL", type: "text" },
+      { path: "footer.notes", label: "Footer Notes", type: "textarea" },
+      // JSON arrays edited by the designer (rendered by custom UI, not generic form)                   // inline-review
+      {
+        path: "fields",
+        label: "Custom Fields[]",
+        type: "object",
+        hideOnChange: true,
+      },
+      {
+        path: "lineItemColumns",
+        label: "Line Item Columns[]",
+        type: "object",
+        hideOnChange: true,
+      },
+      // audit
+      {
+        path: "createdAt",
+        type: "date",
+        label: "Created At",
+        immutable: true,
+        hideOnChange: true,
+      },
+      {
+        path: "createdBy",
+        type: "text",
+        label: "Created By",
+        immutable: true,
+        hideOnChange: true,
+      },
+      {
+        path: "updatedAt",
+        type: "date",
+        label: "Updated At",
+        immutable: true,
+        hideOnChange: true,
+      },
+      {
+        path: "updatedBy",
+        type: "text",
+        label: "Updated By",
+        immutable: true,
+        hideOnChange: true,
+      },
+    ],
+  },
 };
 
 // 3) Default export for legacy consumers.

@@ -19,6 +19,7 @@ const iconMap = {
   Employees: Users,
   Assets: Warehouse,
   Finances: Banknote,
+  Invoices: Banknote, // NEW: icon for the Invoices branch
   Vendors: User, // ← uncomment when you add the Vendors branch (reuses person icon)
 };
 

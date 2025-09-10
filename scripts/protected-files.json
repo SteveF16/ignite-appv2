@@ -11,5 +11,7 @@
   "src/collectionNames.js",
   "src/navMap.js",
 
-  "src/invoice"
+  "src/invoice",
+
+  "src/IgniteConfig.js"
 ]

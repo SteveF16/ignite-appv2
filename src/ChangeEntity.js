@@ -10,14 +10,16 @@ import {
   updateDoc,
   serverTimestamp,
 } from "firebase/firestore";
-import { FirebaseContext } from "./AppWrapper"; // FIX: get context from AppWrapper, not firestore  // inline-review
-
+import { FirebaseContext } from "./AppWrapper"; // FIX: get context from AppWrapper, not firestore
+// ✅ Centralized, tenant-scoped collection helpers (no more toLowerCase drift)
+import { tenantCollectionPath } from "./collectionNames";
+import { getAppId } from "./IgniteConfig"; // centralized app id
 // Generic, schema‑driven "Change <Entity>" editor for 10–20 tables.
 // - search-as-you-type picker (client-filtered for now; server rules later)
 // - locks immutable fields both visually and by stripping them from update payload
 // - standardized Audit panel visible on all entities (createdAt/By, updatedAt/By)
 
-// Prefer customerNbr (your canonical key) so default search finds the record.        // inline-review
+// Prefer customerNbr (your canonical key) so default search finds the record.
 const DEFAULT_SEARCH_KEYS = [
   "name1",
   "customerNbr",
@@ -25,7 +27,7 @@ const DEFAULT_SEARCH_KEYS = [
   "city",
   "state",
   "country",
-]; // align with customers schema  // inline-review
+]; // align with customers schema
 const COMMON_IMMUTABLE = ["tenantId", "appId", "createdAt", "createdBy"]; // baseline immutables across all collections
 const EXCLUDE_ON_CHANGE = new Set(["createdAt", "updatedAt"]); // fields to exclude from onChange (e.g. timestamps)
 
@@ -41,9 +43,10 @@ export default function ChangeEntity({
   const {
     db,
     tenantId,
-    appId = "default-app-id",
+    appId: ctxAppId, // prefer context if provided
     user,
   } = useContext(FirebaseContext);
+  const appId = ctxAppId || getAppId(); // unified fallback, no hardcoding
   const [loading, setLoading] = useState(false);
   const [items, setItems] = useState([]);
   const [queryText, setQueryText] = useState("");
@@ -53,7 +56,7 @@ export default function ChangeEntity({
   const [message, setMessage] = useState("");
 
   // Normalize schema helpers  // keep logic here so DataSchemas.js doesn't need immediate edits
-  const fields = schema?.fields ?? []; // array of { path/key, label, type, edit, immutable? }  // inline-review
+  const fields = schema?.fields ?? []; // array of { path/key, label, type, edit, immutable? }
   const searchKeys = schema?.search?.keys?.length
     ? schema.search.keys
     : DEFAULT_SEARCH_KEYS; // per‑entity override
@@ -70,19 +73,23 @@ export default function ChangeEntity({
 
   // load when a record is chosen (or deep‑linked via initialDocId)
   useEffect(() => {
-    const idToLoad = initialDocId || selectedId; // prefer deep‑link on first load  // inline-review
+    const idToLoad = initialDocId || selectedId; // prefer deep‑link on first load
     if (!idToLoad) return;
     let cancelled = false;
     (async () => {
       try {
         setLoading(true);
-        const app =
-          typeof __app_id !== "undefined" ? __app_id : "default-app-id";
-        const fullPath = `artifacts/${app}/tenants/${tenantId}/${collectionName.toLowerCase()}`;
-        const snap = await getDoc(doc(db, fullPath, idToLoad)); // use tenant-scoped path
+        // Use canonical per-tenant path — never mutate the collection id locally
+        const fullPath = tenantCollectionPath({
+          appId,
+          tenantId,
+          key: collectionName,
+        });
+        const snap = await getDoc(doc(db, fullPath, idToLoad));
+
         if (!cancelled) {
           setForm(snap.exists() ? snap.data() : {});
-          if (initialDocId) setSelectedId(initialDocId); // reflect in selector            // inline-review
+          if (initialDocId) setSelectedId(initialDocId); // reflect in selector
         }
       } catch (e) {
         if (!cancelled) setMessage(String(e?.message || e));
@@ -101,9 +108,11 @@ export default function ChangeEntity({
     (async () => {
       if (!db || !tenantId || !collectionName) return;
       try {
-        const app =
-          typeof __app_id !== "undefined" ? __app_id : "default-app-id";
-        const fullPath = `artifacts/${app}/tenants/${tenantId}/${collectionName.toLowerCase()}`;
+        const fullPath = tenantCollectionPath({
+          appId,
+          tenantId,
+          key: collectionName,
+        }); // centralized
         const constraints = [limit(100)];
         if (defaultSort?.key) {
           constraints.unshift(
@@ -183,9 +192,11 @@ export default function ChangeEntity({
     setMessage("");
     if (!id) return;
     try {
-      const app =
-        typeof __app_id !== "undefined" ? __app_id : appId || "default-app-id";
-      const fullPath = `artifacts/${app}/tenants/${tenantId}/${collectionName.toLowerCase()}`;
+      const fullPath = tenantCollectionPath({
+        appId,
+        tenantId,
+        key: collectionName,
+      });
       const ref = doc(db, fullPath, id);
       const snap = await getDoc(ref);
       if (snap.exists()) {
@@ -201,7 +212,7 @@ export default function ChangeEntity({
   }
 
   function onChangeField(key, value) {
-    // write by dot‑path so nested fields (e.g. "billing.city") edit correctly   // inline-review
+    // write by dot‑path so nested fields (e.g. "billing.city") edit correctly
     setForm((prev) => {
       const next = { ...prev }; // make a shallow copy of state
       setByPath(next, key, value); // dot-path write ensures e.g. "credit.onHold" is updated
@@ -215,10 +226,10 @@ export default function ChangeEntity({
     setMessage("");
     try {
       // Make a deep copy so we can safely mutate before sending to Firestore
-      const payload = JSON.parse(JSON.stringify(form)); // keeps nested updates like credit.onHold    // inline-review
+      const payload = JSON.parse(JSON.stringify(form)); // keeps nested updates like credit.onHold
 
-      // Strip immutables **first** so our audit stamps (below) don't get deleted.                     // inline-review
-      // Never strip updatedAt/updatedBy even if a schema accidentally marks them immutable.           // inline-review
+      // Strip immutables **first** so our audit stamps (below) don't get deleted.
+      // Never strip updatedAt/updatedBy even if a schema accidentally marks them immutable.
       for (const k of allImmutable) {
         if (k === "updatedAt" || k === "updatedBy") continue;
         delete payload[k];
@@ -226,18 +237,18 @@ export default function ChangeEntity({
       for (const f of fields) {
         const k = f?.path || f?.key || f?.name;
         if (!k) continue;
-        if (k === "updatedAt" || k === "updatedBy") continue; // guard stamps                           // inline-review
+        if (k === "updatedAt" || k === "updatedBy") continue; // guard stamps
         if (f?.immutable) delete payload[k];
       }
 
-      // Now stamp audit using server time & current actor                                              // inline-review
+      // Now stamp audit using server time & current actor
       payload.updatedAt = serverTimestamp();
       payload.updatedBy = user?.email || user?.uid || "unknown";
 
       // Reference the document to update
       const ref = doc(
         db,
-        `artifacts/${appId}/tenants/${tenantId}/${collectionName.toLowerCase()}`,
+        tenantCollectionPath({ appId, tenantId, key: collectionName }),
         selectedId
       );
 
@@ -261,13 +272,13 @@ export default function ChangeEntity({
     }
   }
 
-  // 🚪 Cancel handler — avoid name collision with the `onCancel` prop by using `handleCancel`  // inline-review
+  // 🚪 Cancel handler — avoid name collision with the `onCancel` prop by using `handleCancel`
   const handleCancel = () => {
     console.log("ChangeEntity: Cancel pressed → navigate back to list");
     if (typeof onCancel === "function") {
-      onCancel(); // preferred new prop (e.g., from ListDataView)         // inline-review
+      onCancel(); // preferred new prop (e.g., from ListDataView)
     } else if (typeof onSaveAndClose === "function") {
-      onSaveAndClose(); // fallback for existing App.js integration             // inline-review
+      onSaveAndClose(); // fallback for existing App.js integration
     }
   };
 
@@ -331,7 +342,7 @@ export default function ChangeEntity({
 
     if (type === "select") {
       // ✅ FIX: On *Change Employee* the Status select was blank because this component
-      // only populated country/currency. Pull enum from the schema first.                 // inline-review
+      // only populated country/currency. Pull enum from the schema first.
       const enumFromField = Array.isArray(f.enum) ? f.enum : undefined; // can be provided inline
       const enumFromSchema = (schema.fields || []).find(
         (ff) => (ff.path || ff.key || ff.name) === key
@@ -417,7 +428,7 @@ export default function ChangeEntity({
     };
 
     if (key === "credit.limit") {
-      const n = value ?? ""; // FIX: use the field's current value (val was undefined)  // inline-review
+      const n = value ?? ""; // FIX: use the field's current value (val was undefined)
       return (
         <div key={key} className="mb-4">
           <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -453,7 +464,7 @@ export default function ChangeEntity({
       );
     }
 
-    // “State/Region”: when US -> dropdown of states; otherwise keep free-form input.                   // inline-review
+    // “State/Region”: when US -> dropdown of states; otherwise keep free-form input.
     if (key.endsWith(".state")) {
       const selectedCountry = getByPath(form, "billing.address.country");
       const US_STATES = [
@@ -551,7 +562,7 @@ export default function ChangeEntity({
               immutable ? "readonly-field" : ""
             }`}
             value={value}
-            onChange={(e) => onChangeField(key, e.target.value)} // dot‑path safe writer  // inline-review
+            onChange={(e) => onChangeField(key, e.target.value)} // dot‑path safe writer
             disabled={immutable}
             readOnly={immutable}
           />
@@ -612,7 +623,7 @@ export default function ChangeEntity({
       .filter(Boolean);
     const seen = new Set(declared);
     const extra = (primitiveFields || []).filter((f) => !seen.has(f.key));
-    // Ensure 'status' carries the enum from schema even if discovered via primitives.     // inline-review
+    // Ensure 'status' carries the enum from schema even if discovered via primitives.
     const stitched = [...(fields || []), ...extra].map((f) => {
       if ((f.path || f.key || f.name) !== "status") return f;
       const enumFromSchema = (schema.fields || []).find(

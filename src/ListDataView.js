@@ -14,14 +14,19 @@ import {
   doc,
 } from "firebase/firestore";
 import { FirebaseContext } from "./AppWrapper";
+import { getAppId } from "./IgniteConfig"; // centralized app id
 import { Edit, Trash2, Download } from "lucide-react";
 import ChangeEntity from "./ChangeEntity"; // use unified editor instead of legacy inline form
 import { CollectionSchemas } from "./DataSchemas";
+// Centralize collection ids & per-tenant paths (prevents casing drift like invoiceTemplates vs invoicetemplates) // inline-review
+import { collectionIdForBranch, tenantCollectionPath } from "./collectionNames"; // inline-review
 
-// Map "List Customers" → "Customers", etc.
-function getCollectionFromBranch(branch) {
-  return String(branch || "").replace(/^List\s+/i, "");
-}
+// Helper: presentable label from a collection key (e.g., "invoiceTemplates" → "Invoice Templates")   // inline-review
+const labelFromCollectionKey = (key) =>
+  String(key || "")
+    .replace(/([A-Z])/g, " $1")
+    .replace(/^./, (c) => c.toUpperCase())
+    .trim();
 
 // ---------------------------------------------------------------------------
 // Render helpers
@@ -67,7 +72,14 @@ const renderValue = (value, key) => {
   return value !== undefined && value !== null ? String(value) : "";
 };
 
-const ListDataView = ({ branch, navTick }) => {
+// Props:
+//   branch       → UI label context (e.g., "Customers", "Invoices") for headings/breadcrumbs
+//   collectionKey→ canonical collection id (e.g., "customers", "invoiceTemplates"); if omitted, we derive from branch
+const ListDataView = ({
+  branch,
+  collectionKey: collectionKeyProp,
+  navTick,
+}) => {
   // navTick forces a refresh when user re-presses "List ..."
   const { db, tenantId } = useContext(FirebaseContext);
   const [data, setData] = useState([]); // raw firestore rows
@@ -89,7 +101,7 @@ const ListDataView = ({ branch, navTick }) => {
     console.log(
       "ListDataView: STEVE- NAV change → leaving edit mode & (re)subscribing",
       { branch, navTick }
-    ); // inline-review
+    );
 
     setEditItem(null);
 
@@ -103,22 +115,39 @@ const ListDataView = ({ branch, navTick }) => {
     }
 
     // 3) Build query scoped to tenant + collection.
-    const appId = typeof __app_id !== "undefined" ? __app_id : "default-app-id";
-    const collectionName = branch.replace("List ", "").toLowerCase();
-    const collectionPath = `artifacts/${appId}/tenants/${tenantId}/${collectionName}`;
+    const appId = getAppId(); // no globals/env scatter
+
+    // ✅ Resolve a canonical collection key & per-tenant path from a single source of truth
+    // Prefer explicit collectionKey prop; otherwise derive from branch label.                            // inline-review
+    const branchLabel = String(branch || "").replace(/^List\s+/i, ""); // UI label, no "List " prefix
+    const collectionKey =
+      collectionKeyProp || collectionIdForBranch(branchLabel); // e.g., "customers", "invoiceTemplates"
+    const collectionPath = tenantCollectionPath({
+      appId,
+      tenantId,
+      key: collectionKey,
+    });
+
+    console.info("[list] STEVE- Resolved path (centralized)", {
+      branch,
+      branchLabel,
+      collectionKey,
+      collectionPath,
+    });
+
     const q = query(
       collection(db, collectionPath),
       where("tenantId", "==", tenantId)
     );
 
-    // 4) Subscribe once; protect setState against StrictMode double-invoke.     // inline-review
+    // 4) Subscribe once; protect setState against StrictMode double-invoke.
     setLoading(true);
     let cancelled = false;
-    console.log(`ListDataView: Subscribing to '${collectionPath}'`);
+    console.log(`ListDataView: STEVE- Subscribing to '${collectionPath}'`);
     const unsubscribe = onSnapshot(
       q,
       (querySnapshot) => {
-        if (cancelled) return; // ignore late emissions after cleanup            // inline-review
+        if (cancelled) return; // ignore late emissions after cleanup
         const fetchedData = querySnapshot.docs.map((doc) => ({
           id: doc.id,
           ...doc.data(),
@@ -126,12 +155,12 @@ const ListDataView = ({ branch, navTick }) => {
         setData(fetchedData);
         setLoading(false);
         console.log(
-          `ListDataView: Snapshot received for '${collectionPath}' (${fetchedData.length} rows)`
+          `ListDataView: STEVE- Snapshot received for '${collectionPath}' (${fetchedData.length} rows)`
         );
       },
       (error) => {
         if (cancelled) return;
-        console.error("ListDataView onSnapshot error", error);
+        console.error("ListDataView STEVE- onSnapshot error", error);
         setLoading(false);
       }
     );
@@ -158,13 +187,17 @@ const ListDataView = ({ branch, navTick }) => {
   // NOTE: We purposely avoid leaking sensitive fields here (see schema.excludes).
   const shapeForList = useCallback(
     (rawRows) => {
-      const collectionName = branch.replace("List ", "");
-      const colSchema = CollectionSchemas?.[collectionName];
+      // Schema tables are keyed by Capitalized name (e.g., "Customers", "InvoiceTemplates")             // inline-review
+      const schemaKey = collectionKeyProp
+        ? collectionKeyProp.charAt(0).toUpperCase() + collectionKeyProp.slice(1)
+        : branch.replace("List ", "");
+      const colSchema = CollectionSchemas?.[schemaKey];
+
       const exclude = new Set(colSchema?.list?.exclude || []);
       if (!rawRows?.length) return [];
 
       // Customers: derive readable fields from nested objects
-      if (collectionName === "Customers") {
+      if (schemaKey === "Customers") {
         return rawRows.map((row) => {
           const shaped = {
             id: row.id,
@@ -207,7 +240,7 @@ const ListDataView = ({ branch, navTick }) => {
         return shaped;
       });
     },
-    [branch]
+    [branch, collectionKeyProp]
   );
 
   const deriveColumns = (rows) => {
@@ -234,13 +267,16 @@ const ListDataView = ({ branch, navTick }) => {
   // Initialize sort from the schema for this branch/collection (no global listCfg).
   useEffect(() => {
     if (sortKey) return;
-    const collectionName = branch.replace("List ", "");
-    const ds = CollectionSchemas?.[collectionName]?.list?.defaultSort;
+    const schemaKey = collectionKeyProp
+      ? collectionKeyProp.charAt(0).toUpperCase() + collectionKeyProp.slice(1)
+      : branch.replace("List ", "");
+    const ds = CollectionSchemas?.[schemaKey]?.list?.defaultSort;
+
     if (ds?.key) {
       setSortKey(ds.key);
       setSortDir(ds.dir === "desc" ? "desc" : "asc");
     }
-  }, [branch, sortKey]); // keep deps small to avoid re-initializing on every render
+  }, [branch, collectionKeyProp, sortKey]); // keep deps small to avoid re-initializing on every render
 
   // Safe getter for nested paths like "billing.address.city"
   const getByPath = (obj, path) => {
@@ -282,7 +318,7 @@ const ListDataView = ({ branch, navTick }) => {
 
   const toggleSort = (key) => {
     if (!key) return;
-    // click same header to flip direction, new header resets to asc                 // inline-review
+    // click same header to flip direction, new header resets to asc
     setSortKey((prevKey) => (prevKey === key ? prevKey : key));
     setSortDir((prevDir) =>
       sortKey === key ? (prevDir === "asc" ? "desc" : "asc") : "asc"
@@ -297,8 +333,10 @@ const ListDataView = ({ branch, navTick }) => {
     if (!Array.isArray(viewData) || viewData.length === 0) return;
 
     // derive config
-    const collectionName = branch.replace("List ", "");
-    const colSchema = CollectionSchemas?.[collectionName];
+    const schemaKey = collectionKeyProp
+      ? collectionKeyProp.charAt(0).toUpperCase() + collectionKeyProp.slice(1)
+      : branch.replace("List ", "");
+    const colSchema = CollectionSchemas?.[schemaKey];
     const excludeCsv = new Set(colSchema?.csv?.exclude || []); // <- from schema
 
     // build header list from currently visible columns (minus excluded)
@@ -320,7 +358,10 @@ const ListDataView = ({ branch, navTick }) => {
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = `${collectionName.toLowerCase()}_export.csv`; // consistent filename
+
+    const fileKey = collectionKeyProp || collectionIdForBranch(branch);
+    a.download = `${String(fileKey).toLowerCase()}_export.csv`; // consistent filename
+
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -350,14 +391,17 @@ const ListDataView = ({ branch, navTick }) => {
   const confirmDelete = async () => {
     if (!itemToDelete || !db || !tenantId) return;
     try {
-      const collectionName = branch.replace("List ", "").toLowerCase();
-      const appId =
-        typeof __app_id !== "undefined" ? __app_id : "default-app-id";
-      const docRef = doc(
-        db,
-        `artifacts/${appId}/tenants/${tenantId}/${collectionName}`,
-        itemToDelete.id
-      );
+      // Use the same centralized mapping for deletes so list/edit/delete are always in the same collection // inline-review
+      const appId = getAppId();
+      const branchLabel = String(branch || "").replace(/^List\s+/i, "");
+      const key = collectionKeyProp || collectionIdForBranch(branchLabel);
+      const path = tenantCollectionPath({
+        appId,
+        tenantId,
+        key,
+      });
+      const docRef = doc(db, path, itemToDelete.id);
+
       await deleteDoc(docRef);
       setIsDeleteModalOpen(false);
       setItemToDelete(null);
@@ -377,20 +421,26 @@ const ListDataView = ({ branch, navTick }) => {
 
   // ────────────────────────────────────────────────────────────────────────────
   // Unified editor: render ChangeEntity instead of the legacy DataEntryForm.
-  // This keeps a single edit surface (same as the Sidebar → Change Customer).   // inline-review
+  // This keeps a single edit surface (same as the Sidebar → Change Customer).
   // If user clicked Edit, render the standardized ChangeEntity (deep‑linked)
   if (editItem) {
-    const collectionName = getCollectionFromBranch(branch);
+    // Use schemaKey derived from collectionKey so templates/invoices work even when branch is generic ("Invoices")  // inline-review
+    const schemaKey = collectionKeyProp
+      ? collectionKeyProp.charAt(0).toUpperCase() + collectionKeyProp.slice(1)
+      : branch.replace("List ", "");
+    const uiLabel = labelFromCollectionKey(
+      collectionKeyProp || collectionIdForBranch(branch)
+    );
     return (
       <ChangeEntity
-        entityLabel={branch}
-        collectionName={collectionName}
-        schema={CollectionSchemas?.[collectionName]}
+        entityLabel={uiLabel}
+        collectionName={collectionKeyProp || collectionIdForBranch(branch)}
+        schema={CollectionSchemas?.[schemaKey]}
         initialDocId={editItem.id} /* open the exact row the user clicked */
         // ✅ Let the Change screen bring us back to the list without extra clicks
         onCancel={() => setEditItem(null)} // Cancel button returns to list
         onSaved={() => setEditItem(null)} // After save, return to list (optional UX)
-        key={`edit:${collectionName}:${editItem.id}`} // force a clean editor mount per row
+        key={`edit:${schemaKey}:${editItem.id}`} // force a clean editor mount per row
       />
     );
   }
@@ -421,7 +471,10 @@ const ListDataView = ({ branch, navTick }) => {
     <div className="p-6">
       <div className="flex justify-between items-center mb-4">
         <h2 className="text-2xl font-bold text-gray-800">
-          {branch.replace("List ", "")} Records
+          {labelFromCollectionKey(
+            collectionKeyProp || collectionIdForBranch(branch)
+          )}{" "}
+          Records
         </h2>
         <button
           onClick={handleDownloadCSV}

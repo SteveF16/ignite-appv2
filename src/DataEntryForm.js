@@ -12,6 +12,10 @@ import DatePicker from "react-datepicker";
 import "react-datepicker/dist/react-datepicker.css";
 import { CollectionSchemas } from "./DataSchemas"; // ← central, nested-aware schemas
 
+// ✅ Centralize collection ids + tenant path building to avoid casing drift across the app           // inline-review
+import { collectionIdForBranch, tenantCollectionPath } from "./collectionNames";
+import { getAppId } from "./IgniteConfig"; // single source of truth for app id                        // inline-review
+
 // -----------------------------------------------------------------------------
 // Debug flag: when true, we log the exact Firestore collection path and doc id.
 // Toggle to `false` for production if you don't want console noise.
@@ -76,15 +80,13 @@ const DataEntryForm = ({ selectedBranch, initialData, onSave, onCancel }) => {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
 
-  const collectionName = selectedBranch
-    .replace("Change ", "")
-    .replace("Add ", "")
-    .toLowerCase();
+  // Use the same resolver the rest of the app uses; do NOT lowercase ad-hoc.                        // inline-review
+  const collectionName = collectionIdForBranch(selectedBranch);
 
   const normalized = useMemo(() => {
     const key =
       collectionName.charAt(0).toUpperCase() + collectionName.slice(1);
-    return CollectionSchemas[key] || null;
+    return CollectionSchemas[key] || null; // schema key still uses LeadingCaps (e.g., "Customers")  // inline-review
   }, [collectionName]);
 
   // Only use the unified CollectionSchemas; if none, render no fields.
@@ -245,12 +247,14 @@ const DataEntryForm = ({ selectedBranch, initialData, onSave, onCancel }) => {
       }
       // normalize shipping if useBilling (if applicable)
       const isEditMode = selectedBranch.includes("Change");
-      // Determine app namespace; if __app_id isn't defined, we fall back to "default-app-id"
-      // This is IMPORTANT for finding the record in Firestore console.
-      // If you don't see your record, check this path first.
-      const appId =
-        typeof __app_id !== "undefined" ? __app_id : "default-app-id";
-      const collectionPath = `artifacts/${appId}/tenants/${tenantId}/${collectionName}`; // e.g., artifacts/default-app-id/tenants/<tenantId>/customers
+      // Resolve app namespace from centralized config (no globals/env scatter).                        // inline-review
+      const appId = getAppId();
+
+      const collectionPath = tenantCollectionPath({
+        appId,
+        tenantId,
+        key: collectionName,
+      }); // canonical path // inline-review
       if (DEBUG_FIRESTORE) {
         console.log("[DataEntryForm] collectionPath:", collectionPath); // <-- helps you locate the document in Firestore
       }
@@ -306,6 +310,7 @@ const DataEntryForm = ({ selectedBranch, initialData, onSave, onCancel }) => {
           collection(db, collectionPath),
           createPayload
         );
+
         if (DEBUG_FIRESTORE) {
           console.log("[DataEntryForm] created doc id:", docRef.id);
         }
