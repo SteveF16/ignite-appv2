@@ -146,12 +146,12 @@ const DataSchemas = {
 // 2) Export the new collection-centric schemas AFTER the DataSchemas object.
 //    This prevents the "Unexpected keyword 'export'" parser error.
 // NOTE: App.js calls `getCollectionFromBranch("Customers")` which returns "customers".
-//       To avoid schema-miss issues (blank edit pane), we alias BOTH keys here.  // inline-review: schema alias
+//       To avoid schema-miss issues (blank edit pane), we alias BOTH keys here.  : schema alias
 // --- NEW: Collection-centric schemas consumed by DataEntryForm/ListDataView ---
 export default DataSchemas; // keep legacy default export
 
 // Customers collection schema used by List/Change screens
-// ✅ Single truth for audit immutability and date typing                           // inline-review
+// ✅ Single truth for audit immutability and date typing
 const CustomersSchema = {
   meta: {
     immutable: [
@@ -290,13 +290,34 @@ const CustomersSchema = {
   ],
 };
 
+// ---------------------------------------------
+// Employees: dropdown option catalogs
+// ---------------------------------------------
+const EMPLOYMENT_STATUS_OPTIONS = [
+  { value: "Active", label: "Active" },
+  { value: "On Leave", label: "On Leave" },
+  { value: "Suspended", label: "Suspended" },
+  { value: "Terminated", label: "Terminated" },
+  { value: "Retired", label: "Retired" },
+];
+
+const EMPLOYMENT_TYPE_OPTIONS = [
+  { value: "Full-time", label: "Full-time" },
+  { value: "Part-time", label: "Part-time" },
+  { value: "Contract", label: "Contract" },
+  { value: "Intern", label: "Intern" },
+  { value: "Temporary", label: "Temporary" },
+  { value: "Seasonal", label: "Seasonal" },
+  { value: "Contingent", label: "Contingent" },
+];
+
 export const CollectionSchemas = {
   customers: CustomersSchema, // lower-case alias used by code paths
   Customers: CustomersSchema, // Title-case alias for compatibility
 
   // ──────────────────────────────────────────────────────────────────────────
   // Invoices (data instances) — values are mostly driven by a chosen template
-  // Audit fields stay immutable; business fields are dynamic via template.            // inline-review
+  // Audit fields stay immutable; business fields are dynamic via template.
   Invoices: {
     label: "Invoices",
     collection: "invoices",
@@ -325,7 +346,7 @@ export const CollectionSchemas = {
       { path: "customer.email", label: "Bill To: Email", type: "text" },
       { path: "issueDate", label: "Issue Date", type: "date", required: true },
       { path: "dueDate", label: "Due Date", type: "date", required: true },
-      // Dynamic payload slots written by the editor (do not render in generic form)    // inline-review
+      // Dynamic payload slots written by the editor (do not render in generic form)
       {
         path: "fields",
         label: "Dynamic Fields",
@@ -383,7 +404,7 @@ export const CollectionSchemas = {
     ],
   },
 
-  // InvoiceTemplates (designer) — defines dynamic fields, line item columns, header/footer, etc.      // inline-review
+  // InvoiceTemplates (designer) — defines dynamic fields, line item columns, header/footer, etc.
   InvoiceTemplates: {
     label: "Invoice Templates",
     collection: "invoiceTemplates",
@@ -400,7 +421,7 @@ export const CollectionSchemas = {
       { path: "header.title", label: "Header Title", type: "text" },
       { path: "header.logoUrl", label: "Logo URL", type: "text" },
       { path: "footer.notes", label: "Footer Notes", type: "textarea" },
-      // JSON arrays edited by the designer (rendered by custom UI, not generic form)                   // inline-review
+      // JSON arrays edited by the designer (rendered by custom UI, not generic form)
       {
         path: "fields",
         label: "Custom Fields[]",
@@ -442,6 +463,110 @@ export const CollectionSchemas = {
         immutable: true,
         hideOnChange: true,
       },
+    ],
+  },
+
+  // ────────────────────────────────────────────────────────────────────────────────
+  // Employees (core profile). Sensitive fields (SSN, compensation) will live in a
+  // protected subcollection and are *not* part of this schema.
+  Employees: {
+    collectionName: "employees",
+    addTitle: "Add Employee",
+    changeTitle: "Change Employee",
+    listTitle: "List Employees",
+    fields: [
+      {
+        path: "employeeId",
+        label: "Employee ID",
+        type: "text",
+        required: true,
+        hideOnChange: true,
+      },
+      { path: "firstName", label: "First Name", type: "text", required: true },
+      { path: "lastName", label: "Last Name", type: "text", required: true },
+      { path: "email", label: "Email", type: "email" },
+      { path: "phoneNumber", label: "Phone", type: "text" },
+      {
+        path: "dateOfBirth",
+        label: "Date of Birth",
+        type: "date",
+        immutable: true,
+      }, // PII display-only later
+      { path: "address.street", label: "Street", type: "text", required: true },
+      { path: "address.city", label: "City", type: "text", required: true },
+      { path: "address.state", label: "State", type: "text", required: true },
+      { path: "address.zipCode", label: "ZIP", type: "text", required: true },
+      { path: "hireDate", label: "Hire Date", type: "date", required: true },
+
+      // Employment Status (required)
+      {
+        path: "employmentStatus", // if you used nested paths, replace with "employment.status"
+        label: "Employment Status",
+        type: "select",
+        required: true,
+        options: EMPLOYMENT_STATUS_OPTIONS,
+        placeholder: "Select Employment status",
+        //        defaultValue: "Active",       <-- this hides the hint "select status"
+      },
+
+      // Employment Type
+      {
+        path: "employmentType", // if you used nested paths, replace with "employment.type"
+        label: "Employment Type",
+        type: "select",
+        options: EMPLOYMENT_TYPE_OPTIONS,
+        allowBlank: true, // Adding this allows hint 'select value' to show
+        placeholder: "Select Employment type",
+      },
+
+      { path: "department", label: "Department", type: "text" }, // will become lookup later
+      { path: "title", label: "Title", type: "text" },
+      { path: "managerId", label: "Manager Employee ID", type: "text" },
+
+      { path: "location", label: "Location", type: "text" },
+      { path: "costCenter", label: "Cost Center", type: "text" },
+      // Logical delete flags (no physical deletes)
+      {
+        path: "isDeleted",
+        label: "Deleted?",
+        type: "checkbox",
+        hideOnAdd: true,
+      },
+      {
+        path: "deletedAt",
+        label: "Deleted At",
+        type: "date",
+        hideOnAdd: true,
+        immutable: true,
+      },
+      {
+        path: "deletedBy",
+        label: "Deleted By",
+        type: "text",
+        hideOnAdd: true,
+        immutable: true,
+      },
+    ],
+    list: [
+      { path: "employeeId", label: "ID" },
+      { path: "lastName", label: "Last" },
+      { path: "firstName", label: "First" },
+      { path: "email", label: "Email" },
+      { path: "employmentStatus", label: "Status" },
+      { path: "department", label: "Dept" },
+      { path: "title", label: "Title" },
+      { path: "updatedAt", label: "Updated" },
+    ],
+    defaultSort: { path: "lastName", dir: "asc" },
+    csv: [
+      "employeeId",
+      "lastName",
+      "firstName",
+      "email",
+      "employmentStatus",
+      "department",
+      "title",
+      "updatedAt",
     ],
   },
 };

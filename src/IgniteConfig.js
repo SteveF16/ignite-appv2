@@ -24,3 +24,31 @@ export const IgniteConfig = {
   },
   // Future: orgId, workspaceId, date formats, currency, feature gates, etc.
 };
+
+// ────────────────────────────────────────────────────────────────────────────────
+// Employees module support: per-tenant tax engine selection & PII key metadata.
+// These are thin helpers; resolve *real* secrets via server or secure store.
+// In production, do NOT expose vendor API keys in browser code.
+
+/** Return a normalized per-tenant config object. Replace with secure fetch if needed. */
+export function getTenantConfig(tenantId) {
+  // Example shape sourced from a bootstrap global or future config document.
+  const t =
+    (typeof globalThis !== "undefined" &&
+      globalThis.__ignite?.tenants?.[tenantId]) ||
+    {};
+  return {
+    taxEngine: t.taxEngine || { provider: "none", baseUrl: "", apiKeyRef: "" },
+    piiKeyRef: t.piiKeyRef || "", // reference ONLY (e.g., KMS alias or secret id)
+  };
+}
+
+/** Select the tax engine descriptor for a tenant. */
+export function getTaxEngineForTenant(tenantId) {
+  return getTenantConfig(tenantId).taxEngine; // { provider, baseUrl, apiKeyRef }
+}
+
+/** Expose PII key reference metadata for a tenant (no raw keys!). */
+export function getPiiKeyInfo(tenantId) {
+  return { keyRef: getTenantConfig(tenantId).piiKeyRef };
+}

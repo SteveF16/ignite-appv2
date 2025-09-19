@@ -14,6 +14,8 @@ import { FirebaseContext } from "./AppWrapper"; // FIX: get context from AppWrap
 // ✅ Centralized, tenant-scoped collection helpers (no more toLowerCase drift)
 import { tenantCollectionPath } from "./collectionNames";
 import { getAppId } from "./IgniteConfig"; // centralized app id
+import { dbg } from "./debug"; // 🔎 gated logger (no behavior change)
+
 // Generic, schema‑driven "Change <Entity>" editor for 10–20 tables.
 // - search-as-you-type picker (client-filtered for now; server rules later)
 // - locks immutable fields both visually and by stripping them from update payload
@@ -71,6 +73,24 @@ export default function ChangeEntity({
     dir: "asc",
   }; // now used to sort list
 
+  // ── DIAG H: on mount, confirm editor context and critical field shapes ──────────────────────────
+  useEffect(() => {
+    const status = (schema?.fields || []).find(
+      (f) => f.path === "employmentStatus"
+    );
+    const type = (schema?.fields || []).find(
+      (f) => f.path === "employmentType"
+    );
+    dbg("[Change] mount props", {
+      entityLabel,
+      collectionName,
+      defaultSort,
+      hasFields: Array.isArray(schema?.fields),
+      statusMeta: status,
+      typeMeta: type,
+    });
+  }, [entityLabel, collectionName, schema, defaultSort]);
+
   // load when a record is chosen (or deep‑linked via initialDocId)
   useEffect(() => {
     const idToLoad = initialDocId || selectedId; // prefer deep‑link on first load
@@ -126,6 +146,14 @@ export default function ChangeEntity({
         const snap = await getDocs(q);
         if (!cancelled) {
           setItems(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+
+          // ── DIAG I: picker shape & path so we can verify tenant/app scoping ────────────────────
+          dbg("[Change] picker snapshot", {
+            path: fullPath,
+            count: snap.size,
+            tenantId,
+            appId,
+          });
         }
       } catch (e) {
         if (!cancelled) setMessage(String(e?.message || e));
