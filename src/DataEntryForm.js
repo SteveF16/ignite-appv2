@@ -11,6 +11,7 @@ import { X, Save } from "lucide-react";
 import DatePicker from "react-datepicker";
 import "react-datepicker/dist/react-datepicker.css";
 import { CollectionSchemas } from "./DataSchemas"; // ← central, nested-aware schemas
+import { dbg } from "./debug"; // 🔎 gated logger (no behavior change)
 
 // ✅ Centralize collection ids + tenant path building to avoid casing drift across the app           // inline-review
 import { collectionIdForBranch, tenantCollectionPath } from "./collectionNames";
@@ -58,20 +59,110 @@ const setByPath = (obj, path, value) => {
   return obj;
 };
 
+// ──────────────────────────────────────────────────────────────────────────────
+// 🧹 Firestore-safe payload helpers (NO behavior change to UI; write-only)
+// Firestore rejects `undefined`. We prune it, and we serialize Date → 'yyyy-mm-dd'
+// because this app’s domain model stores dates as strings (audit fields use Timestamps).
+// These helpers are tiny, local, and only used just before add/update.               // inline-review
+const deleteByPath = (obj, path) => {
+  const parts = path.split(".");
+  const last = parts.pop();
+  let cursor = obj;
+  for (const k of parts) {
+    if (!cursor || typeof cursor !== "object") return;
+    cursor = cursor[k];
+  }
+  if (cursor && Object.prototype.hasOwnProperty.call(cursor, last))
+    delete cursor[last];
+};
+const isPlainObject = (v) => v && typeof v === "object" && !Array.isArray(v);
+const pruneUndefinedDeep = (obj) => {
+  if (!isPlainObject(obj)) return obj;
+  for (const k of Object.keys(obj)) {
+    const v = obj[k];
+    if (v === undefined) {
+      delete obj[k];
+    } else if (Array.isArray(v)) {
+      for (let i = v.length - 1; i >= 0; i--) {
+        if (v[i] === undefined) v.splice(i, 1);
+        else if (isPlainObject(v[i])) pruneUndefinedDeep(v[i]);
+      }
+    } else if (isPlainObject(v)) {
+      pruneUndefinedDeep(v);
+      if (Object.keys(v).length === 0) delete obj[k];
+    }
+  }
+  return obj;
+};
+const fmtYmd = (d) => {
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+};
+const sanitizeForWrite = (dataObj, schemaFields) => {
+  // create a safe, shallow JSON clone (we only set/delete with dot-paths)
+  const out = JSON.parse(JSON.stringify(dataObj ?? {}));
+
+  // Walk schema so we only touch declared fields (least surprise).                            // inline-review
+  (schemaFields || []).forEach((f) => {
+    const v = getByPath(out, f.path);
+    if (f.type === "date") {
+      // UI may carry Date | '' | undefined. Store string or drop field entirely.
+      if (v instanceof Date) {
+        setByPath(out, f.path, fmtYmd(v));
+      } else if (v === "" || v === undefined || v === null) {
+        deleteByPath(out, f.path); // ← avoid Firestore "Unsupported field value: undefined"
+      }
+    } else {
+      if (v === undefined) deleteByPath(out, f.path);
+    }
+  });
+
+  pruneUndefinedDeep(out);
+  return out;
+};
+// ─────────
+
 // Flatten schema to uniform list of fields { path, type, label, required, enum, allowBlank, sensitive }
 const flattenSchema = (schema) =>
-  (schema?.fields ?? []).map((f) => ({
-    path: f.path,
-    type: f.type,
-    label: f.label || f.path.split(".").slice(-1)[0],
-    required: !!f.required,
-    enum: Array.isArray(f.enum) ? f.enum : undefined,
-    allowBlank: !!f.allowBlank,
-    sensitive: !!f.sensitive,
-    immutable: !!f.immutable,
-    editableOnCreate: !!f.editableOnCreate,
-    hideOnChange: !!f.hideOnChange, // schema-driven visibility in Change mode
-  }));
+  // ⚠️ Restore correct `map(() => { ... return {...}; })` form; previous edit left stray tokens.     // inline-review
+  (schema?.fields ?? schema?.form ?? []).map((f) => {
+    const out = {
+      path: f.path,
+      type: f.type,
+      label: f.label || f.path.split(".").slice(-1)[0],
+      required: !!f.required,
+      enum: Array.isArray(f.enum) ? f.enum : undefined, // renderer (legacy) may consume strings via `enum`
+      options: Array.isArray(f.options) ? f.options : undefined, // 🔎 pass through modern {value,label} or string[]
+      allowBlank: !!f.allowBlank,
+      sensitive: !!f.sensitive,
+      immutable: !!f.immutable,
+      editableOnCreate: !!f.editableOnCreate,
+      hideOnChange: !!f.hideOnChange, // schema-driven visibility in Change mode
+    };
+
+    // ── DIAG A: log how the two selects are defined in schema (no behavior change) ────────────────
+    if (f.path === "employmentStatus" || f.path === "employmentType") {
+      const normalizedPreview = Array.isArray(f.enum)
+        ? f.enum.slice(0, 3)
+        : Array.isArray(f.options)
+        ? (f.options || []).slice(0, 3)
+        : [];
+      dbg("[Add] normalize(select)", {
+        path: f.path,
+        from: Array.isArray(f.enum)
+          ? "enum"
+          : Array.isArray(f.options)
+          ? "options"
+          : "none",
+        enumLen: Array.isArray(out.enum) ? out.enum.length : 0,
+        optionsLen: Array.isArray(out.options) ? out.options.length : 0,
+        sample: normalizedPreview,
+      });
+    }
+
+    return out;
+  });
+
 // ─────────────────────────────────────────────────────────────────────────────@@
 
 const DataEntryForm = ({ selectedBranch, initialData, onSave, onCancel }) => {
@@ -86,7 +177,24 @@ const DataEntryForm = ({ selectedBranch, initialData, onSave, onCancel }) => {
   const normalized = useMemo(() => {
     const key =
       collectionName.charAt(0).toUpperCase() + collectionName.slice(1);
-    return CollectionSchemas[key] || null; // schema key still uses LeadingCaps (e.g., "Customers")  // inline-review
+    const schema = CollectionSchemas[key] || null; // schema key still uses LeadingCaps (e.g., "Customers")  // inline-review
+    // ── DIAG A: confirm which schema we resolved for this branch/collection ───────────────────────
+    dbg("[Add] schema lookup", {
+      selectedBranch,
+      collectionName, // e.g., "employees"
+      resolvedKey: key,
+      hasSchema: !!schema,
+      hasFields: Array.isArray(schema?.fields),
+      fieldsCount: (schema?.fields || []).length,
+      // glance at the two fields we’re chasing; safe, non-PII
+      statusField: (schema?.fields || []).find(
+        (f) => f.path === "employmentStatus"
+      ),
+      typeField: (schema?.fields || []).find(
+        (f) => f.path === "employmentType"
+      ),
+    });
+    return schema;
   }, [collectionName]);
 
   // Only use the unified CollectionSchemas; if none, render no fields.
@@ -94,6 +202,28 @@ const DataEntryForm = ({ selectedBranch, initialData, onSave, onCancel }) => {
     () => (normalized ? flattenSchema(normalized) : []),
     [normalized]
   );
+
+  // ── DIAG B: show the flattened view the renderer will use (first few only) ──────────────────────
+  useEffect(() => {
+    const brief = (f) => ({
+      path: f.path,
+      type: f.type,
+      required: !!f.required,
+      enumLen: Array.isArray(f.enum) ? f.enum.length : 0,
+    });
+    dbg(
+      "[Add] flatten result (first 8)",
+      (schemaFields || []).slice(0, 8).map(brief)
+    );
+    dbg("[Add] select metas", {
+      employmentStatus: (schemaFields || []).find(
+        (f) => f.path === "employmentStatus"
+      ),
+      employmentType: (schemaFields || []).find(
+        (f) => f.path === "employmentType"
+      ),
+    });
+  }, [schemaFields]);
 
   // Determine mode once for render logic below
   const isEditMode = selectedBranch.includes("Change");
@@ -205,6 +335,14 @@ const DataEntryForm = ({ selectedBranch, initialData, onSave, onCancel }) => {
     setFormData(next);
   }, [initialData, schemaFields]);
 
+  // ── DIAG C: whenever the two selects change, show the bound values (controlled state) ───────────
+  useEffect(() => {
+    dbg("[Add] binding snapshot", {
+      statusValue: formData?.employmentStatus ?? "(undefined)",
+      typeValue: formData?.employmentType ?? "(undefined)",
+    });
+  }, [formData?.employmentStatus, formData?.employmentType]);
+
   const handleChange = (path, value) => {
     // generic setter for any input (supports nested)
     setFormData((prev) => {
@@ -217,6 +355,17 @@ const DataEntryForm = ({ selectedBranch, initialData, onSave, onCancel }) => {
       } else {
         setByPath(clone, path, value);
       }
+
+      // ── DIAG D: capture select changes for the two target fields ────────────────────────────────
+      if (path === "employmentStatus" || path === "employmentType") {
+        dbg("[Add] select change", { path, value });
+      }
+
+      // ── DIAG B: capture select changes for Employment fields only (no PII) ───────────────────────
+      if (path === "employmentStatus" || path === "employmentType") {
+        dbg("[Add] select change", { path, value });
+      }
+
       return clone;
     });
   };
@@ -232,19 +381,76 @@ const DataEntryForm = ({ selectedBranch, initialData, onSave, onCancel }) => {
     });
   };
 
+  // [diag] observe controlled values for the two selects during typing/selecting                    // inline-review
+  useEffect(() => {
+    dbg("[Add] binding snapshot", {
+      statusValue: formData?.employmentStatus ?? "(undefined)",
+      typeValue: formData?.employmentType ?? "(undefined)",
+    });
+  }, [formData?.employmentStatus, formData?.employmentType]);
+
+  // ── DIAG C: whenever bound values for the two selects change, show controlled-state snapshot ────
+  useEffect(() => {
+    dbg("[Add] binding snapshot", {
+      statusValue: formData?.employmentStatus ?? "(undefined)",
+      typeValue: formData?.employmentType ?? "(undefined)",
+    });
+  }, [formData?.employmentStatus, formData?.employmentType]);
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
     setMessage("");
 
     try {
+      // ── DIAG E: snapshot just before validation/payload build (sanitized to target fields only) ─
+      const statusMeta = (schemaFields || []).find(
+        (f) => f.path === "employmentStatus"
+      );
+      const typeMeta = (schemaFields || []).find(
+        (f) => f.path === "employmentType"
+      );
+      dbg("[Add] pre-validate snapshot", {
+        status: formData?.employmentStatus ?? "(undefined)",
+        type: formData?.employmentType ?? "(undefined)",
+        statusRequired: !!statusMeta?.required,
+        typeRequired: !!typeMeta?.required,
+        // Count from whichever list the schema provided: options (objects/strings) or enum (strings)
+        statusChoicesLen: Array.isArray(statusMeta?.options)
+          ? statusMeta.options.length
+          : Array.isArray(statusMeta?.enum)
+          ? statusMeta.enum.length
+          : 0,
+        typeChoicesLen: Array.isArray(typeMeta?.options)
+          ? typeMeta.options.length
+          : Array.isArray(typeMeta?.enum)
+          ? typeMeta.enum.length
+          : 0,
+      });
+
       // basic client-side validation (allow blanks where not required)
       const errors = validate();
       if (errors.length) {
+        dbg("[Add] validate errors", errors); // 🔎 which fields failed
+        dbg("[Add] values on error", {
+          employmentStatus: formData?.employmentStatus ?? "(undefined)",
+          employmentType: formData?.employmentType ?? "(undefined)",
+        });
         setMessage(errors.join(", ")); // keep user-friendly for now
         setLoading(false);
         return;
       }
+
+      // 🧹 NEW: deep sanitize just before write (drop undefineds, format dates)                     // inline-review
+      const prepared = sanitizeForWrite(formData, schemaFields);
+      dbg("[Add] sanitize result", {
+        hasDOB: Object.prototype.hasOwnProperty.call(prepared, "dateOfBirth"),
+        dateOfBirth: prepared.dateOfBirth ?? "(omitted)",
+      });
+
+      // Preserve sensitive-field handling
+      const clean = await encryptIfSensitive(prepared);
+
       // normalize shipping if useBilling (if applicable)
       const isEditMode = selectedBranch.includes("Change");
       // Resolve app namespace from centralized config (no globals/env scatter).                        // inline-review
@@ -257,19 +463,15 @@ const DataEntryForm = ({ selectedBranch, initialData, onSave, onCancel }) => {
       }); // canonical path // inline-review
       if (DEBUG_FIRESTORE) {
         console.log("[DataEntryForm] collectionPath:", collectionPath); // <-- helps you locate the document in Firestore
+        // ── DIAG F: show the two fields that will be saved (sanitized happens below) ─────────────
+        dbg("[Add] path + current values", {
+          path: collectionPath,
+          tenantId,
+          appId,
+          employmentStatus: formData?.employmentStatus ?? "(undefined)",
+          employmentType: formData?.employmentType ?? "(undefined)",
+        });
       }
-
-      // Encrypt any sensitive fields before save (stubbed)
-      const secured = await encryptIfSensitive(formData);
-
-      // Strip client-provided audit/tenant fields (defense in depth)                           // inline-review
-      const clean = { ...secured };
-      delete clean.createdAt;
-      delete clean.createdBy;
-      delete clean.updatedAt;
-      delete clean.updatedBy;
-      delete clean.tenantId;
-      delete clean.appId;
 
       // Server clock  actor for audit                                                         // inline-review
       const now = serverTimestamp();
@@ -288,6 +490,12 @@ const DataEntryForm = ({ selectedBranch, initialData, onSave, onCancel }) => {
           await updateDoc(docRef, updatePayload);
           if (DEBUG_FIRESTORE) {
             console.log("[DataEntryForm] updated doc id:", initialData.id);
+
+            dbg("[Add] update payload (employment fields only)", {
+              employmentStatus:
+                updatePayload?.employmentStatus ?? "(undefined)",
+              employmentType: updatePayload?.employmentType ?? "(undefined)",
+            });
           }
           setMessage(
             `${selectedBranch.replace(
@@ -313,6 +521,11 @@ const DataEntryForm = ({ selectedBranch, initialData, onSave, onCancel }) => {
 
         if (DEBUG_FIRESTORE) {
           console.log("[DataEntryForm] created doc id:", docRef.id);
+
+          dbg("[Add] create payload (employment fields only)", {
+            employmentStatus: createPayload?.employmentStatus ?? "(undefined)",
+            employmentType: createPayload?.employmentType ?? "(undefined)",
+          });
         }
         setFormData({});
         setMessage(
@@ -346,6 +559,19 @@ const DataEntryForm = ({ selectedBranch, initialData, onSave, onCancel }) => {
       const v = getByPath(formData, f.path);
       if (f.required && (v === "" || v == null))
         errors.push(`${f.label} is required`);
+
+      // ── DIAG G: focus on the two selects when they fail validation ─────────────────────────────
+      if (
+        f.required &&
+        (f.path === "employmentStatus" || f.path === "employmentType")
+      ) {
+        dbg("[validate] employment required check", {
+          path: f.path,
+          value: v,
+          isEmpty: v === "" || v == null,
+        });
+      }
+
       if (f.type === "email" && v && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v))
         errors.push("Invalid email");
       //                                  ^^^^^^^  FIX: add '+' quantifiers to email regex
@@ -389,7 +615,15 @@ const DataEntryForm = ({ selectedBranch, initialData, onSave, onCancel }) => {
             isEditMode ? true : !f.immutable || f.editableOnCreate
           )
           .map((field) => {
-            const { path, type, label, enum: options, allowBlank } = field;
+            // Prefer modern `options` (objects or strings), fall back to legacy `enum` (strings)
+            const {
+              path,
+              type,
+              label,
+              options,
+              enum: enumList,
+              allowBlank,
+            } = field;
             const placeholder =
               label ||
               path
@@ -406,14 +640,30 @@ const DataEntryForm = ({ selectedBranch, initialData, onSave, onCancel }) => {
               !!(normalized?.meta?.immutable ?? []).includes(path);
             const locked = isEditMode && isImmutable; // compute ONCE per field                          // inline-review
 
-            // plug dynamic options if schema kept type:select without enum
-            let dynamicOptions = options;
+            // Normalize which list the <select> should render
+            // precedence: schema.options → schema.enum  (both may be string[]; options may also be [{value,label}])
+            let dynamicOptions = options ?? enumList;
             if (!dynamicOptions && isSelect) {
               if (path.endsWith(".country"))
                 dynamicOptions = countryOptions.map((o) => o.value);
               if (path === "credit.currency")
                 dynamicOptions = currencyOptions.map((o) => o.value);
             } // ← FIX: close conditional before returning JSX (was causing “Unexpected token )”)  // inline-review
+
+            // ── DIAG D: at render time, confirm the options and current binding for Employment* ────
+            if (
+              isSelect &&
+              (path === "employmentStatus" || path === "employmentType")
+            ) {
+              dbg("[Add] render select", {
+                path,
+                optionsCount: Array.isArray(dynamicOptions)
+                  ? dynamicOptions.length
+                  : 0, // use the actual list we render
+                first: (dynamicOptions || [])[0],
+                valueBound: getByPath(formData, path) ?? "(undefined)",
+              });
+            }
 
             // Special-case: State/Region — if US, show a dropdown of states, otherwise freeform.  // inline-review
             if (path.endsWith(".state")) {
@@ -471,11 +721,21 @@ const DataEntryForm = ({ selectedBranch, initialData, onSave, onCancel }) => {
                     className="w-full p-2 border rounded-md focus:ring-blue-500 focus:border-blue-500 transition-colors"
                   >
                     {allowBlank && <option value="">{""}</option>}
-                    {(dynamicOptions || []).map((opt) => (
-                      <option key={opt} value={opt}>
-                        {opt}
-                      </option>
-                    ))}
+                    {(dynamicOptions || []).map((opt) => {
+                      // Support BOTH shapes without changing semantics:
+                      //  - string: "Active"
+                      //  - object: { value: "Active", label: "Active" }
+                      const v = typeof opt === "string" ? opt : opt?.value;
+                      const l =
+                        typeof opt === "string"
+                          ? opt
+                          : opt?.label ?? opt?.value;
+                      return (
+                        <option key={String(v)} value={String(v)}>
+                          {String(l ?? "")}
+                        </option>
+                      );
+                    })}
                   </select>
                 ) : isCheckbox ? (
                   <input
