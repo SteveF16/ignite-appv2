@@ -9,12 +9,13 @@ import {
   query,
   updateDoc,
   serverTimestamp,
+  deleteField,
 } from "firebase/firestore";
 import { FirebaseContext } from "./AppWrapper"; // FIX: get context from AppWrapper, not firestore
 // ✅ Centralized, tenant-scoped collection helpers (no more toLowerCase drift)
 import { tenantCollectionPath } from "./collectionNames";
 import { getAppId } from "./IgniteConfig"; // centralized app id
-import { dbg } from "./debug"; // 🔎 gated logger (no behavior change)
+//import { dbg } from "./debug"; // 🔎 gated logger (no behavior change)
 
 // Generic, schema‑driven "Change <Entity>" editor for 10–20 tables.
 // - search-as-you-type picker (client-filtered for now; server rules later)
@@ -32,6 +33,59 @@ const DEFAULT_SEARCH_KEYS = [
 ]; // align with customers schema
 const COMMON_IMMUTABLE = ["tenantId", "appId", "createdAt", "createdBy"]; // baseline immutables across all collections
 const EXCLUDE_ON_CHANGE = new Set(["createdAt", "updatedAt"]); // fields to exclude from onChange (e.g. timestamps)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Back-compat DEBUG flag to avoid runtime "DBG_CHANGE is not defined".
+// Some render helpers still check this symbol directly; define it safely.
+// Turn on from DevTools with:  window.__igniteDebugChange = true
+// NOTE: this definition is *harmless* and does not change behavior unless you
+// explicitly set the window flag; it only prevents ReferenceErrors.
+// ─────────────────────────────────────────────────────────────────────────────
+// eslint-disable-next-line no-unused-vars
+const DBG_CHANGE = (() => {
+  try {
+    return typeof window !== "undefined" && window.__igniteDebugChange === true;
+  } catch {
+    return false;
+  }
+})();
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Focused (opt-in) debug for Change screen (reads flag at call-time; bypass global dbg gate)
+const cdbg = (label, payload) => {
+  try {
+    const on =
+      (typeof window !== "undefined" && window.__igniteDebugChange) === true;
+    if (on) console.log(label, payload);
+  } catch {
+    /* no-op */
+  }
+};
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Normalize anything → 'yyyy-MM-dd' **string** for HTML date inputs.
+// Accepts: '', Date, Firestore.Timestamp, ISO strings, or already 'yyyy-MM-dd'. // inline guard
+function toYmdString(val) {
+  if (val === undefined || val === null || val === "") return ""; // keep controlled input happy
+  if (typeof val === "string") {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(val)) return val; // already in good shape
+    const d = new Date(val);
+    if (!Number.isNaN(d.getTime())) {
+      const pad = (n) => String(n).padStart(2, "0");
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    }
+    return ""; // bad historic data → blank
+  }
+  if (val && typeof val.toDate === "function") return toYmdString(val.toDate()); // Firestore Timestamp
+  if (val instanceof Date) {
+    const pad = (n) => String(n).padStart(2, "0");
+    return `${val.getFullYear()}-${pad(val.getMonth() + 1)}-${pad(
+      val.getDate()
+    )}`;
+  }
+  return ""; // anything else → blank
+}
 
 export default function ChangeEntity({
   entityLabel,
@@ -68,10 +122,19 @@ export default function ChangeEntity({
     [collectionImmutable]
   );
 
-  const defaultSort = schema?.list?.defaultSort || {
-    key: searchKeys[0] || "name1",
-    dir: "asc",
-  }; // now used to sort list
+  // Stabilize sorting so effects don't re-run on every render (prevents read loops)
+  const sortKey =
+    (schema?.list?.defaultSort && schema.list.defaultSort.key) ||
+    searchKeys[0] ||
+    "name1";
+  const sortDir =
+    (schema?.list?.defaultSort && schema.list.defaultSort.dir) === "desc"
+      ? "desc"
+      : "asc";
+  const defaultSort = React.useMemo(
+    () => ({ key: sortKey, dir: sortDir }),
+    [sortKey, sortDir]
+  ); // stable object identity
 
   // ── DIAG H: on mount, confirm editor context and critical field shapes ──────────────────────────
   useEffect(() => {
@@ -81,7 +144,7 @@ export default function ChangeEntity({
     const type = (schema?.fields || []).find(
       (f) => f.path === "employmentType"
     );
-    dbg("[Change] mount props", {
+    cdbg("[Change] mount props", {
       entityLabel,
       collectionName,
       defaultSort,
@@ -89,7 +152,7 @@ export default function ChangeEntity({
       statusMeta: status,
       typeMeta: type,
     });
-  }, [entityLabel, collectionName, schema, defaultSort]);
+  }, [entityLabel, collectionName, schema, sortKey, sortDir]);
 
   // load when a record is chosen (or deep‑linked via initialDocId)
   useEffect(() => {
@@ -109,6 +172,18 @@ export default function ChangeEntity({
 
         if (!cancelled) {
           setForm(snap.exists() ? snap.data() : {});
+
+          // 🔎 Focused diagnostics for deleted fields as they arrive from Firestore                 // debug-only
+          if (snap.exists()) {
+            const d = snap.data();
+            cdbg("[Change][load] delete snapshot", {
+              id: idToLoad,
+              isDeleted: d?.isDeleted ?? d?.deleted ?? "(missing)",
+              deletedAt: d?.deletedAt ?? "(missing)",
+              deletedBy: d?.deletedBy ?? "(missing)",
+            });
+          }
+
           if (initialDocId) setSelectedId(initialDocId); // reflect in selector
         }
       } catch (e) {
@@ -134,13 +209,8 @@ export default function ChangeEntity({
           key: collectionName,
         }); // centralized
         const constraints = [limit(100)];
-        if (defaultSort?.key) {
-          constraints.unshift(
-            orderBy(
-              defaultSort.key,
-              defaultSort.dir === "desc" ? "desc" : "asc"
-            )
-          );
+        if (sortKey) {
+          constraints.unshift(orderBy(sortKey, sortDir));
         }
         const q = query(collection(db, fullPath), ...constraints);
         const snap = await getDocs(q);
@@ -148,7 +218,7 @@ export default function ChangeEntity({
           setItems(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
 
           // ── DIAG I: picker shape & path so we can verify tenant/app scoping ────────────────────
-          dbg("[Change] picker snapshot", {
+          cdbg("[Change] picker snapshot", {
             path: fullPath,
             count: snap.size,
             tenantId,
@@ -162,7 +232,7 @@ export default function ChangeEntity({
     return () => {
       cancelled = true;
     };
-  }, [db, tenantId, collectionName, defaultSort]);
+  }, [db, tenantId, collectionName, sortKey, sortDir]);
 
   // ──────────────────────────────────────────────────────────────────────────
   // Dot‑path helpers so nested schema paths (e.g. "billing.address.line1")
@@ -243,6 +313,30 @@ export default function ChangeEntity({
     // write by dot‑path so nested fields (e.g. "billing.city") edit correctly
     setForm((prev) => {
       const next = { ...prev }; // make a shallow copy of state
+
+      // 🔎 Specifically watch the logical-delete toggle changing in the UI                           // debug-only
+      if (key === "isDeleted" || key === "deleted") {
+        cdbg("[Change][edit] delete toggle", {
+          key,
+          before: !!prev?.[key],
+          after: !!value,
+        });
+
+        // ⤵️ Live-preview the delete stamps so the two fields aren't blank before Save.
+        //    (They will still be re-stamped on Save with serverTimestamp()/actor.)
+        if (value === true) {
+          // normalize flag and show preview stamps
+          next.isDeleted = true; // keep a single canonical flag in state
+          next.deletedAt = new Date(); // preview value for the date input
+          next.deletedBy = user?.email || user?.uid || "unknown";
+        } else {
+          next.isDeleted = false;
+          // clear the preview so the inputs appear blank again
+          next.deletedAt = ""; // keep as empty string for controlled <input type="date">
+          next.deletedBy = "";
+        }
+      }
+
       setByPath(next, key, value); // dot-path write ensures e.g. "credit.onHold" is updated
       return next;
     });
@@ -269,9 +363,41 @@ export default function ChangeEntity({
         if (f?.immutable) delete payload[k];
       }
 
+      // 🔎 Before we stamp audits, capture the delete-related values we are about to send.         // debug-only
+      cdbg("[Change][save] pre-stamp", {
+        id: selectedId,
+        isDeleted: payload?.isDeleted ?? payload?.deleted ?? "(missing)",
+        deletedAt: payload?.deletedAt ?? "(missing)",
+        deletedBy: payload?.deletedBy ?? "(missing)",
+      });
+
       // Now stamp audit using server time & current actor
       payload.updatedAt = serverTimestamp();
       payload.updatedBy = user?.email || user?.uid || "unknown";
+
+      // Soft-delete stamps (and clear on un-delete). We key off either isDeleted or deleted.
+      const delFlag = (payload?.isDeleted ?? payload?.deleted) === true;
+      if (delFlag) {
+        payload.deletedAt = serverTimestamp();
+        payload.deletedBy = user?.email || user?.uid || "unknown";
+        cdbg("[Change][save] stamp delete → set", {
+          isDeleted: true,
+          deletedBy: payload.deletedBy,
+        });
+      } else {
+        // Remove fields server-side; renders as blank client-side.
+        payload.deletedAt = deleteField();
+        payload.deletedBy = deleteField();
+        cdbg("[Change][save] stamp delete → clear", { isDeleted: false });
+      }
+
+      // Optimistic local UI update so the fields reflect immediately
+      setForm((prev) => ({
+        ...prev,
+        isDeleted: !!delFlag,
+        deletedAt: delFlag ? new Date() : null,
+        deletedBy: delFlag ? user?.email || user?.uid || "unknown" : "",
+      }));
 
       // Reference the document to update
       const ref = doc(
@@ -280,8 +406,20 @@ export default function ChangeEntity({
         selectedId
       );
 
+      // 🔎 Final look just before updateDoc so we know exactly what went out.                        // debug-only
+      cdbg("[Change][save] final payload", {
+        has_isDeleted: Object.prototype.hasOwnProperty.call(
+          payload,
+          "isDeleted"
+        ),
+        has_deleted: Object.prototype.hasOwnProperty.call(payload, "deleted"),
+        deletedAt: payload?.deletedAt ?? "(unset)",
+        deletedBy: payload?.deletedBy ?? "(unset)",
+      });
+
       // Update the document in Firestore
       await updateDoc(ref, payload);
+      cdbg("[Change][save] update ok", { id: selectedId });
 
       // Update local state to reflect changes
       setMessage(`${entityLabel.slice(0, -1)} updated successfully.`);
@@ -369,23 +507,49 @@ export default function ChangeEntity({
     };
 
     if (type === "select") {
-      // ✅ FIX: On *Change Employee* the Status select was blank because this component
-      // only populated country/currency. Pull enum from the schema first.
-      const enumFromField = Array.isArray(f.enum) ? f.enum : undefined; // can be provided inline
-      const enumFromSchema = (schema.fields || []).find(
-        (ff) => (ff.path || ff.key || ff.name) === key
-      )?.enum; // Employees.status enum
-      const normalizedEnum =
-        (enumFromField && enumFromField.length
-          ? enumFromField
-          : enumFromSchema) || [];
-      const source = normalizedEnum.length
-        ? normalizedEnum.map((v) => ({ value: String(v), label: String(v) })) // enum → options
-        : key.endsWith(".country")
-        ? getCountryOptions()
-        : key === "credit.currency"
-        ? getCurrencyOptions()
-        : [];
+      // ✅ FIX: Support both `enum` **and** `options` (string[] | {value,label}[]) from schema.
+      // This was the root cause of blank Employment selects in *Change Employee*.                // important
+      const fieldFromSchema =
+        (schema.fields || []).find(
+          (ff) => (ff.path || ff.key || ff.name) === key
+        ) || {};
+      const fromEnum =
+        Array.isArray(f.enum) && f.enum.length
+          ? f.enum
+          : Array.isArray(fieldFromSchema.enum)
+          ? fieldFromSchema.enum
+          : undefined;
+      const fromOptions =
+        Array.isArray(f.options) && f.options.length
+          ? f.options
+          : Array.isArray(fieldFromSchema.options)
+          ? fieldFromSchema.options
+          : undefined;
+
+      // Normalize into [{value,label}] regardless of source shape.
+      let source = [];
+      if (fromOptions) {
+        source = fromOptions.map((o) =>
+          typeof o === "string"
+            ? { value: o, label: o }
+            : {
+                value: String(o.value ?? ""),
+                label: String(o.label ?? o.value ?? ""),
+              }
+        );
+      } else if (fromEnum) {
+        source = fromEnum.map((v) => ({ value: String(v), label: String(v) }));
+      } else if (key.endsWith(".country")) {
+        source = getCountryOptions();
+      } else if (key === "credit.currency") {
+        source = getCurrencyOptions();
+      }
+
+      cdbg("[Change] select meta", {
+        key,
+        count: source.length,
+        sample: source.slice(0, 3),
+      }); // debug-only
 
       return (
         <div key={key} className="mb-4">
@@ -396,7 +560,7 @@ export default function ChangeEntity({
             className={`w-full rounded-md border border-gray-300 p-2 ${
               immutable ? "readonly-field" : ""
             }`}
-            value={value}
+            value={value ?? ""}
             onChange={(e) => onChangeField(key, e.target.value)}
             disabled={immutable}
             readOnly={immutable}
@@ -408,6 +572,36 @@ export default function ChangeEntity({
               </option>
             ))}
           </select>
+          {immutable && (
+            <p className="text-xs text-gray-500 mt-1">
+              This field is immutable.
+            </p>
+          )}
+        </div>
+      );
+    }
+
+    // ✅ FIX: Date inputs — normalize Firestore Timestamp/ISO → 'yyyy-MM-dd' to stop the
+    // browser warning flood and actually render the existing value.                               // important
+    if (type === "date") {
+      const normalized = toYmdString(value); // 'yyyy-MM-dd' or ''
+      if (DBG_CHANGE)
+        cdbg("[Change] render date", { key, in: value, out: normalized }); // debug-only
+      return (
+        <div key={key} className="mb-4">
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            {label}
+          </label>
+          <input
+            type="date"
+            className={`w-full rounded-md border border-gray-300 p-2 ${
+              immutable ? "readonly-field" : ""
+            }`}
+            value={normalized}
+            onChange={(e) => onChangeField(key, e.target.value || "")}
+            disabled={immutable}
+            readOnly={immutable}
+          />
           {immutable && (
             <p className="text-xs text-gray-500 mt-1">
               This field is immutable.
