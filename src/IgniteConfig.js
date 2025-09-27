@@ -18,9 +18,36 @@ export function getAppId() {
   return "default-app-id";
 }
 
+/** System-wide idle pause for realtime listeners (ms). Set to 0 to disable.
+ *  Runtime overrides:
+ *    window.__ignite.idlePauseMs = 0         // disable everywhere
+ *    window.__ignite.idlePauseMs = 300000    // 5 minutes
+ *    window.__igniteIdleMs = 300000          // legacy name supported
+ *
+ * For testing, you can set this in the browser console to a short value (e.g., 5000):
+ * window.__igniteBreakOnEdit = true; // enable debugger breakpoints on edits STEVE-- REMOVE AFTER TESTING!!!!
+ *
+ *
+ */
+
 export const IgniteConfig = {
   get appId() {
     return getAppId();
+  },
+  /** Pause realtime listeners after this many ms of user inactivity (system-wide).
+   *  Runtime overrides:
+   *    window.__ignite.idlePauseMs = 0         // disable idle pause everywhere
+   *    window.__ignite.idlePauseMs = 300000    // 5 min
+   *    window.__igniteIdleMs = 300000          // legacy override supported
+   */
+  get realtimePauseOnIdleMs() {
+    const override =
+      (typeof window !== "undefined" &&
+        window.__ignite &&
+        window.__ignite.idlePauseMs) ??
+      (typeof window !== "undefined" && window.__igniteIdleMs);
+    const n = Number(override);
+    return Number.isFinite(n) && n >= 0 ? n : 120000; // default 2 minutes  STEVE-- SET to 0 to disable!!!
   },
   // Future: orgId, workspaceId, date formats, currency, feature gates, etc.
 };
@@ -52,3 +79,31 @@ export function getTaxEngineForTenant(tenantId) {
 export function getPiiKeyInfo(tenantId) {
   return { keyRef: getTenantConfig(tenantId).piiKeyRef };
 }
+
+// --- Realtime idle/pause support -------------------------------------------
+// Getter that prefers window override, then IgniteConfig.realtime.pauseOnIdleMs
+export function getRealtimePauseOnIdleMs() {
+  // Prefer an explicit window override if present
+  const fromWindow =
+    typeof window !== "undefined" &&
+    window.__ignite &&
+    typeof window.__ignite.realtimePauseOnIdleMs === "number"
+      ? window.__ignite.realtimePauseOnIdleMs
+      : undefined;
+  if (typeof fromWindow === "number") return fromWindow;
+
+  // Fall back to the getter on IgniteConfig
+  const viaGetter =
+    typeof IgniteConfig?.realtimePauseOnIdleMs === "number"
+      ? IgniteConfig.realtimePauseOnIdleMs
+      : undefined;
+  if (typeof viaGetter === "number") return viaGetter;
+
+  // default off
+  return 0;
+}
+
+// Optional named exports for compatibility with older imports
+export const REALTIME = (IgniteConfig && IgniteConfig.realtime) || {};
+export const appRealtime = REALTIME;
+export const realtimePauseOnIdleMs = getRealtimePauseOnIdleMs();

@@ -59,6 +59,72 @@ const setByPath = (obj, path, value) => {
   return obj;
 };
 
+// Convert various incoming shapes to the only thing <input type="date"> accepts: 'yyyy-mm-dd'
+// Accepts: '', Date, Firestore.Timestamp, ISO strings like '2025-09-19T00:00:00.000Z', or already 'yyyy-mm-dd'
+//const toYmdString = (val) => {
+// if (val === undefined || val === null || val === "") return "";
+//  if (typeof val === "string") {
+//    if (/^\d{4}-\d{2}-\d{2}$/.test(val)) return val; // already good
+//    const d = new Date(val);
+//    if (!Number.isNaN(d.getTime())) {
+//      const pad = (n) => String(n).padStart(2, "0");
+//      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+//    }
+//    return ""; // unknown string → blank to avoid browser warning loop
+//  }
+//  if (val instanceof Date) {
+//    const pad = (n) => String(n).padStart(2, "0");
+//    return `${val.getFullYear()}-${pad(val.getMonth() + 1)}-${pad(
+//      val.getDate()
+//    )}`;
+//  }
+//  if (val && typeof val.toDate === "function") {
+//    const d = val.toDate();
+//    const pad = (n) => String(n).padStart(2, "0");
+//    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+//  }
+//  return "";
+//}; */
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Targeted, quieter diagnostics for the form (toggle at runtime):
+//   in DevTools console, run:  window.__igniteDebugForm = true
+// This does NOT affect global dbg() noise elsewhere.                                // inline-review
+const DBG_FORM =
+  (typeof window !== "undefined" && window.__igniteDebugForm) === true;
+const fdbg = (label, payload) => {
+  if (DBG_FORM) dbg(label, payload);
+};
+
+// NEW: change-mode focused diagnostics (very low noise)
+//   in DevTools: window.__igniteDebugChange = true
+const DBG_CHANGE =
+  (typeof window !== "undefined" && window.__igniteDebugChange) === true;
+const cdbg = (label, payload) => {
+  if (DBG_CHANGE) dbg(label, payload);
+};
+// Normalize a select field's option values whether schema uses:
+//   - legacy `enum: string[]`, or
+//   - modern `options: (string | { value, label })[]`
+// Used for seeding defaults in Add-mode only.                                        // inline-review
+const valuesFromSelectField = (field) => {
+  if (!field) return [];
+  if (Array.isArray(field.options)) {
+    return field.options.map((o) =>
+      typeof o === "string" ? o : String(o?.value ?? "")
+    );
+  }
+  if (Array.isArray(field.enum)) return field.enum.map((v) => String(v));
+  return [];
+};
+
+// Format a JS Date → 'yyyy-mm-dd' (HTML date input expects a string, not Date)       // inline-review
+const fmtYmd = (d) => {
+  if (!(d instanceof Date) || Number.isNaN(d.getTime())) return "";
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+};
+
 // ──────────────────────────────────────────────────────────────────────────────
 // 🧹 Firestore-safe payload helpers (NO behavior change to UI; write-only)
 // Firestore rejects `undefined`. We prune it, and we serialize Date → 'yyyy-mm-dd'
@@ -94,10 +160,7 @@ const pruneUndefinedDeep = (obj) => {
   }
   return obj;
 };
-const fmtYmd = (d) => {
-  const pad = (n) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-};
+
 const sanitizeForWrite = (dataObj, schemaFields) => {
   // create a safe, shallow JSON clone (we only set/delete with dot-paths)
   const out = JSON.parse(JSON.stringify(dataObj ?? {}));
@@ -324,20 +387,83 @@ const DataEntryForm = ({ selectedBranch, initialData, onSave, onCancel }) => {
 
     schemaFields.forEach((f) => {
       const v = initialData ? getByPath(initialData, f.path) : undefined;
-      if (f.type === "date" && v) {
-        setByPath(next, f.path, toJsDate(v)); // ✅ Convert Firestore Timestamp to JS Date
-      } else if (f.type === "date") {
-        setByPath(next, f.path, undefined); // ⚠️ Handle a new form where date is not yet set
+
+      // Dates in *domain fields* (e.g., hireDate) are stored as 'yyyy-mm-dd' strings.
+      // Audit fields (createdAt/updatedAt/deletedAt) may be Firestore Timestamps.
+      // HTML <input type="date"> requires a string 'yyyy-mm-dd', not a Date object.               // inline-review
+      if (f.type === "date") {
+        if (v == null || v === "") {
+          setByPath(next, f.path, ""); // keep controlled input happy
+        } else if (typeof v === "string") {
+          setByPath(next, f.path, v); // already normalized
+        } else if (v && typeof v.toDate === "function") {
+          setByPath(next, f.path, fmtYmd(v.toDate())); // Firestore Timestamp → string
+        } else if (v instanceof Date) {
+          setByPath(next, f.path, fmtYmd(v)); // safety
+        } else {
+          setByPath(next, f.path, ""); // unknown shape → blank
+        }
       } else {
         setByPath(next, f.path, v);
       }
     });
-    setFormData(next);
+
+    // 🧩 Seed required selects in **Add** mode when no value is bound yet (do not override in Change)
+    if (!isEditMode) {
+      (schemaFields || [])
+        .filter((f) => f.type === "select" && f.required && !f.allowBlank)
+        .forEach((f) => {
+          const current = getByPath(next, f.path);
+          if (current === undefined || current === "") {
+            const candidates = valuesFromSelectField(f);
+            const first = candidates.length > 0 ? candidates[0] : undefined;
+            if (first !== undefined) {
+              setByPath(next, f.path, first);
+              if (
+                f.path === "employmentStatus" ||
+                f.path === "employmentType"
+              ) {
+                fdbg("[seed] select default", {
+                  path: f.path,
+                  chosen: first,
+                  source: Array.isArray(f.options)
+                    ? "options"
+                    : Array.isArray(f.enum)
+                    ? "enum"
+                    : "none",
+                });
+              }
+            }
+          }
+        });
+    } else {
+      // Targeted, quiet diagnostics for Change-mode casing/missing field issues
+      const snapshot = {
+        employmentStatus: getByPath(initialData || {}, "employmentStatus"),
+        employmentType: getByPath(initialData || {}, "employmentType"),
+        hireDate: getByPath(initialData || {}, "hireDate"),
+        deleted: getByPath(initialData || {}, "deleted"),
+        deletedAt: getByPath(initialData || {}, "deletedAt"),
+        deletedBy: getByPath(initialData || {}, "deletedBy"),
+      };
+      fdbg("[change:init] incoming initialData picks", snapshot);
+      cdbg("[change:init] incoming initialData picks", snapshot);
+    }
+    // Avoid re-trigger loops: only set state when something actually changed                             // guard
+    const prevJson = JSON.stringify(formData || {});
+    const nextJson = JSON.stringify(next);
+    if (prevJson !== nextJson) {
+      setFormData(next);
+    } else {
+      fdbg("[change:init] no-op setFormData (unchanged snapshot)", {
+        size: nextJson.length,
+      });
+    }
   }, [initialData, schemaFields]);
 
   // ── DIAG C: whenever the two selects change, show the bound values (controlled state) ───────────
   useEffect(() => {
-    dbg("[Add] binding snapshot", {
+    fdbg("[Add] binding snapshot", {
       statusValue: formData?.employmentStatus ?? "(undefined)",
       typeValue: formData?.employmentType ?? "(undefined)",
     });
@@ -358,12 +484,12 @@ const DataEntryForm = ({ selectedBranch, initialData, onSave, onCancel }) => {
 
       // ── DIAG D: capture select changes for the two target fields ────────────────────────────────
       if (path === "employmentStatus" || path === "employmentType") {
-        dbg("[Add] select change", { path, value });
+        fdbg("[Add] select change", { path, value });
       }
 
       // ── DIAG B: capture select changes for Employment fields only (no PII) ───────────────────────
       if (path === "employmentStatus" || path === "employmentType") {
-        dbg("[Add] select change", { path, value });
+        fdbg("[Add] select change", { path, value });
       }
 
       return clone;
@@ -383,7 +509,7 @@ const DataEntryForm = ({ selectedBranch, initialData, onSave, onCancel }) => {
 
   // [diag] observe controlled values for the two selects during typing/selecting                    // inline-review
   useEffect(() => {
-    dbg("[Add] binding snapshot", {
+    fdbg("[Add] binding snapshot", {
       statusValue: formData?.employmentStatus ?? "(undefined)",
       typeValue: formData?.employmentType ?? "(undefined)",
     });
@@ -391,7 +517,7 @@ const DataEntryForm = ({ selectedBranch, initialData, onSave, onCancel }) => {
 
   // ── DIAG C: whenever bound values for the two selects change, show controlled-state snapshot ────
   useEffect(() => {
-    dbg("[Add] binding snapshot", {
+    fdbg("[Add] binding snapshot", {
       statusValue: formData?.employmentStatus ?? "(undefined)",
       typeValue: formData?.employmentType ?? "(undefined)",
     });
@@ -480,6 +606,18 @@ const DataEntryForm = ({ selectedBranch, initialData, onSave, onCancel }) => {
       if (isEditMode) {
         if (initialData && initialData.id) {
           const docRef = doc(db, collectionPath, initialData.id);
+          // DIAG: show delete flags just before we compose update payload
+          const prevDeleted = !!getByPath(initialData || {}, "deleted");
+          const nextDeleted = !!getByPath(formData || {}, "deleted");
+          cdbg("[change] delete reconcile (pre-update)", {
+            prevDeleted,
+            nextDeleted,
+            existingDeletedAt:
+              getByPath(initialData || {}, "deletedAt") ?? null,
+            existingDeletedBy:
+              getByPath(initialData || {}, "deletedBy") ?? null,
+          });
+
           const updatePayload = {
             ...clean,
             tenantId,
@@ -490,6 +628,8 @@ const DataEntryForm = ({ selectedBranch, initialData, onSave, onCancel }) => {
           await updateDoc(docRef, updatePayload);
           if (DEBUG_FIRESTORE) {
             console.log("[DataEntryForm] updated doc id:", initialData.id);
+
+            cdbg("[change] update ok", { id: initialData.id });
 
             dbg("[Add] update payload (employment fields only)", {
               employmentStatus:
@@ -607,8 +747,13 @@ const DataEntryForm = ({ selectedBranch, initialData, onSave, onCancel }) => {
 
       <form onSubmit={handleSubmit} className="space-y-6">
         {schemaFields
+
           // Hide fields explicitly flagged to be hidden on Change screen (createdAt/updatedAt).     // inline-review
-          .filter((f) => !(isEditMode && f.hideOnChange))
+          //    .filter((f) => !(isEditMode && f.hideOnChange))  STEVE- commented out for testing!!
+          .filter((f) => !(isEditMode && f.hideOnAdd))
+          //
+
+          //
           // On Add: show non-immutable OR explicitly marked editableOnCreate. On Change: show all
           // (locks are applied via disabled/readOnly).                                               // inline-review
           .filter((f) =>
@@ -683,7 +828,7 @@ const DataEntryForm = ({ selectedBranch, initialData, onSave, onCancel }) => {
                     <select
                       id={path}
                       name={path}
-                      value={getByPath(formData, path) ?? ""}
+                      value={getByPath(formData, path) ?? ""} // controlled; seeded in Add-mode if required+no-blank
                       onChange={(e) => handleChange(path, e.target.value || "")}
                       disabled={locked}
                       className={`w-full p-2 border rounded-md focus:ring-blue-500 focus:border-blue-500 transition-colors ${

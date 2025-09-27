@@ -1,3 +1,5 @@
+/*eslint no-debugger: "off"*/ //* STEVE: allow debugger for interactive breakpoints REMOVE AFTER TESTING
+
 import React, {
   useState,
   useEffect,
@@ -9,12 +11,13 @@ import {
   collection,
   onSnapshot,
   query,
-  where, // Add this import
+  where,
   deleteDoc,
   doc,
+  getDocs, // + one-shot fetch when realtime is paused
 } from "firebase/firestore";
 import { FirebaseContext } from "./AppWrapper";
-import { getAppId } from "./IgniteConfig"; // centralized app id
+import { getAppId, IgniteConfig } from "./IgniteConfig";
 import { Edit, Trash2, Download } from "lucide-react";
 import ChangeEntity from "./ChangeEntity"; // use unified editor instead of legacy inline form
 import { CollectionSchemas } from "./DataSchemas";
@@ -27,6 +30,19 @@ const labelFromCollectionKey = (key) =>
     .replace(/([A-Z])/g, " $1")
     .replace(/^./, (c) => c.toUpperCase())
     .trim();
+
+// ────────────────────────────────────────────────────────────────────────────
+// Debug helper (enable with: window.__igniteDebugList = true)
+function ldbg(...args) {
+  try {
+    if (typeof window !== "undefined" && window.__igniteDebugList) {
+      // eslint-disable-next-line no-console
+      console.log(...args);
+    }
+  } catch {
+    ("STEVE-Some Debugging Error has occurred");
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Render helpers
@@ -85,11 +101,118 @@ const ListDataView = ({
   const [data, setData] = useState([]); // raw firestore rows
   const [viewData, setViewData] = useState([]); // shaped rows for table/CSV
   const [loading, setLoading] = useState(true);
+
+  // Stable id to force editor mount even if other effects touch editItem
   const [editItem, setEditItem] = useState(null);
+
+  // Stable id to force editor mount even if other effects touch editItem
+  const [editDocId, setEditDocId] = useState(null);
+  const [realtime, setRealtime] = useState(true); // + live updates on/off
+
+  // Track *why* realtime is off so we can show an idle banner only for auto-pauses.
+  const [pausedReason, setPausedReason] = useState(null); // 'idle' | 'manual' | null
+  const [bannerDismissed, setBannerDismissed] = useState(false);
 
   // Sorting state – seeded from schema.defaultSort
   const [sortKey, setSortKey] = useState(null);
   const [sortDir, setSortDir] = useState("asc"); // "asc" | "desc"
+
+  // Auto-pause realtime if the user is idle for a while; resume on activity.
+  useEffect(() => {
+    const idleMs = IgniteConfig.realtimePauseOnIdleMs;
+    if (!idleMs) return; // disabled
+    let lastActivity = Date.now();
+    const markActive = () => {
+      lastActivity = Date.now();
+      // Let ChangeEntity know the app is active
+      try {
+        window.__igniteActive = true;
+      } catch {
+        ("STEVE- ChangeEntity should be active- ERROR!!");
+      }
+
+      if (!document.hidden && !realtime && pausedReason === "idle") {
+        console.log("[list] idle → resume realtime");
+        setRealtime(true);
+        setPausedReason(null);
+        setBannerDismissed(true); // hide banner after auto-resume
+      }
+    };
+    const events = ["mousemove", "keydown", "click", "scroll", "focus"];
+    events.forEach((ev) =>
+      window.addEventListener(ev, markActive, { passive: true })
+    );
+    const check = () => {
+      const idleFor = Date.now() - lastActivity;
+      if (realtime && !document.hidden && idleFor >= idleMs) {
+        console.log("[list] idle → pause realtime", { idleFor, idleMs });
+        setRealtime(false);
+        setPausedReason("idle");
+        setBannerDismissed(false);
+
+        // Mark app inactive while auto-paused
+        try {
+          window.__igniteActive = false;
+        } catch {
+          ("STEVE- ChangeEntity should be inactive- ERROR!!");
+        }
+      }
+    };
+    const t = window.setInterval(
+      check,
+      Math.min(Math.max(Math.floor(idleMs / 3), 1000), 15000)
+    );
+    return () => {
+      events.forEach((ev) => window.removeEventListener(ev, markActive));
+      window.clearInterval(t);
+    };
+  }, [realtime, pausedReason]);
+
+  // Pause realtime when the tab is hidden; resume when visible.
+  useEffect(() => {
+    const apply = () => {
+      const visible = document.visibilityState === "visible";
+      setRealtime(visible);
+      if (visible) {
+        setPausedReason(null);
+        setBannerDismissed(true);
+        try {
+          window.__igniteActive = true;
+        } catch {
+          ("STEVE- ChangeEntity should be active- ERROR!!");
+        }
+      } else {
+        // If hidden, treat as manual pause for banner purposes (no idle banner).
+        setPausedReason("manual");
+        try {
+          window.__igniteActive = false;
+        } catch {
+          ("Steve- ChangeEntity should be inactive- ERROR!!");
+        }
+      }
+    };
+    document.addEventListener("visibilitychange", apply);
+    apply(); // initialize on mount
+    return () => document.removeEventListener("visibilitychange", apply);
+  }, []);
+
+  // One-shot fetch helper (used when realtime is paused or user presses Refresh)
+  const fetchOnce = useCallback(async () => {
+    if (!db || !tenantId || !branch) return;
+    const appId = getAppId();
+    const branchLabel = String(branch || "").replace(/^List\s+/i, "");
+    const key = collectionKeyProp || collectionIdForBranch(branchLabel);
+    const path = tenantCollectionPath({ appId, tenantId, key });
+    const q = query(collection(db, path), where("tenantId", "==", tenantId));
+    setLoading(true);
+    try {
+      const snap = await getDocs(q);
+      const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      setData(rows);
+    } finally {
+      setLoading(false);
+    }
+  }, [db, tenantId, branch, collectionKeyProp]);
 
   // 🔄 Unified nav/listener effect
   // When the user navigates (Change → List), **first** leave edit mode, **then**
@@ -103,7 +226,9 @@ const ListDataView = ({
       { branch, navTick }
     );
 
+    // leave edit mode on nav change
     setEditItem(null);
+    setEditDocId(null);
 
     // 2) Guard prerequisites.
     if (!db || !tenantId || !branch) {
@@ -140,14 +265,32 @@ const ListDataView = ({
       where("tenantId", "==", tenantId)
     );
 
-    // 4) Subscribe once; protect setState against StrictMode double-invoke.
-    setLoading(true);
+    // 4) Either attach a realtime listener, or do a one-shot fetch if realtime is paused.
     let cancelled = false;
+    if (!realtime) {
+      (async () => {
+        setLoading(true);
+        try {
+          const snap = await getDocs(q);
+          if (cancelled) return;
+          const fetched = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+          setData(fetched);
+        } finally {
+          if (!cancelled) setLoading(false);
+        }
+      })();
+      // Nothing to clean up when paused.
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    setLoading(true);
     console.log(`ListDataView: STEVE- Subscribing to '${collectionPath}'`);
     const unsubscribe = onSnapshot(
       q,
       (querySnapshot) => {
-        if (cancelled) return; // ignore late emissions after cleanup
+        if (cancelled) return;
         const fetchedData = querySnapshot.docs.map((doc) => ({
           id: doc.id,
           ...doc.data(),
@@ -173,7 +316,7 @@ const ListDataView = ({
       );
       unsubscribe();
     };
-  }, [db, tenantId, branch, navTick]); // include navTick so re-pressing "List ..." resets and resubscribes
+  }, [db, tenantId, branch, navTick, realtime]); // + react to realtime toggle/visibility
 
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [itemToDelete, setItemToDelete] = useState(null);
@@ -374,13 +517,19 @@ const ListDataView = ({
   // useEffect(() => {  STEVE THIS CODE was 2 listners fighting each other!!!
   // 🔁 (Removed) The old subscribe effect lived here and fought the edit-mode effect.
 
-  // 🎯 Re-introduce edit handler used by the ACTIONS column
-  // (line ~471 calls: onClick={() => handleEdit(item)} )
+  // 🎯 Edit handler used by the ACTIONS column
+  // (onClick={() => handleEdit(item)})
   const handleEdit = (item) => {
     console.log("ListDataView: edit click → entering edit mode", {
       id: item?.id,
     });
+    // Optional interactive breakpoint: enable with window.__igniteBreakOnEdit = true
+    // eslint-disable-next-line no-unused-expressions
+    if (typeof window !== "undefined" && window.__igniteBreakOnEdit) debugger;
+
     setEditItem(item); // this toggles the component from list/table view → edit form
+    setEditDocId(item?.id || null);
+    window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
   const handleDelete = (item) => {
@@ -423,7 +572,7 @@ const ListDataView = ({
   // Unified editor: render ChangeEntity instead of the legacy DataEntryForm.
   // This keeps a single edit surface (same as the Sidebar → Change Customer).
   // If user clicked Edit, render the standardized ChangeEntity (deep‑linked)
-  if (editItem) {
+  if (editItem || editDocId) {
     // Use schemaKey derived from collectionKey so templates/invoices work even when branch is generic ("Invoices")  // inline-review
     const schemaKey = collectionKeyProp
       ? collectionKeyProp.charAt(0).toUpperCase() + collectionKeyProp.slice(1)
@@ -431,16 +580,32 @@ const ListDataView = ({
     const uiLabel = labelFromCollectionKey(
       collectionKeyProp || collectionIdForBranch(branch)
     );
+
+    const initId = editDocId || editItem?.id || null;
+    ldbg("[list→change] rendering ChangeEntity with", {
+      initId,
+      schemaKey,
+      uiLabel,
+      collection: collectionKeyProp || collectionIdForBranch(branch),
+    });
+
     return (
       <ChangeEntity
         entityLabel={uiLabel}
         collectionName={collectionKeyProp || collectionIdForBranch(branch)}
         schema={CollectionSchemas?.[schemaKey]}
-        initialDocId={editItem.id} /* open the exact row the user clicked */
+        initialDocId={initId}
+        key={`edit:${schemaKey}:${initId}`}
         // ✅ Let the Change screen bring us back to the list without extra clicks
-        onCancel={() => setEditItem(null)} // Cancel button returns to list
-        onSaved={() => setEditItem(null)} // After save, return to list (optional UX)
-        key={`edit:${schemaKey}:${editItem.id}`} // force a clean editor mount per row
+
+        onCancel={() => {
+          setEditItem(null);
+          setEditDocId(null);
+        }}
+        onSaved={() => {
+          setEditItem(null);
+          setEditDocId(null);
+        }}
       />
     );
   }
@@ -469,6 +634,38 @@ const ListDataView = ({
   return (
     // Keep outer padding only; let the scroll container own the gray background
     <div className="p-6">
+      {/* Idle pause banner (only when paused by IDLE and not dismissed) */}
+      {!realtime && pausedReason === "idle" && !bannerDismissed && (
+        <div className="mb-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-amber-900 shadow-sm">
+          <div className="flex items-center justify-between gap-3">
+            <div className="text-sm">
+              {IgniteConfig.idleBannerText ||
+                "Realtime updates are paused due to inactivity to reduce Firestore reads. Click Resume to re-enable live updates."}
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => {
+                  setRealtime(true);
+                  setPausedReason(null);
+                  setBannerDismissed(true);
+                  // Optionally sync once on resume
+                  fetchOnce();
+                }}
+                className="px-3 py-1.5 rounded-lg bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700"
+              >
+                Resume
+              </button>
+              <button
+                onClick={() => setBannerDismissed(true)}
+                className="px-3 py-1.5 rounded-lg bg-white border text-sm font-semibold hover:bg-gray-50"
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="flex justify-between items-center mb-4">
         <h2 className="text-2xl font-bold text-gray-800">
           {labelFromCollectionKey(
@@ -476,13 +673,47 @@ const ListDataView = ({
           )}{" "}
           Records
         </h2>
-        <button
-          onClick={handleDownloadCSV}
-          className="flex items-center space-x-2 px-4 py-2 bg-green-500 text-white rounded-lg font-semibold hover:bg-green-600 transition-colors shadow-md"
-        >
-          <Download size={20} />
-          <span>Download CSV</span>
-        </button>
+        <div className="flex items-center space-x-2">
+          <button
+            onClick={handleDownloadCSV}
+            className="flex items-center space-x-2 px-4 py-2 bg-green-500 text-white rounded-lg font-semibold hover:bg-green-600 transition-colors shadow-md"
+            title="Export current view to CSV"
+          >
+            <Download size={20} />
+            <span>Download CSV</span>
+          </button>
+          <button
+            onClick={() =>
+              setRealtime((r) => {
+                const next = !r;
+                setPausedReason(next ? null : "manual");
+                setBannerDismissed(false);
+                return next;
+              })
+            }
+            className={`px-3 py-2 rounded-lg font-semibold shadow-md ${
+              realtime
+                ? "bg-blue-500 text-white hover:bg-blue-600"
+                : "bg-gray-200 text-gray-800 hover:bg-gray-300"
+            }`}
+            title={
+              realtime
+                ? "Realtime is ON (listens for changes)"
+                : "Realtime is PAUSED (no background reads)"
+            }
+          >
+            {realtime ? "Live" : "Paused"}
+          </button>
+          {!realtime && (
+            <button
+              onClick={fetchOnce}
+              className="px-3 py-2 rounded-lg font-semibold shadow-md bg-white border hover:bg-gray-50"
+              title="Fetch latest once"
+            >
+              Refresh
+            </button>
+          )}
+        </div>
       </div>
       {/* Scroll region — background travels with horizontal scroll (no “cut off” edge) */}
       <div className="overflow-x-auto rounded-2xl shadow-sm border border-gray-200 bg-gray-50">
@@ -536,7 +767,10 @@ const ListDataView = ({
                 <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                   <div className="flex justify-center space-x-2">
                     <button
-                      onClick={() => handleEdit(item)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleEdit(item);
+                      }}
                       className="text-indigo-600 hover:text-indigo-900 transition-colors"
                     >
                       <Edit size={20} />
