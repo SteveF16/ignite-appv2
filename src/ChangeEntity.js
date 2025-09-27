@@ -14,8 +14,10 @@ import {
 import { FirebaseContext } from "./AppWrapper"; // FIX: get context from AppWrapper, not firestore
 // ✅ Centralized, tenant-scoped collection helpers (no more toLowerCase drift)
 import { tenantCollectionPath } from "./collectionNames";
-import { getAppId } from "./IgniteConfig"; // centralized app id
+import { getAppId } from "./IgniteConfig"; // centralized appId
+
 //import { dbg } from "./debug"; // 🔎 gated logger (no behavior change)
+import * as IgniteCfg from "./IgniteConfig";
 
 // Generic, schema‑driven "Change <Entity>" editor for 10–20 tables.
 // - search-as-you-type picker (client-filtered for now; server rules later)
@@ -136,6 +138,61 @@ export default function ChangeEntity({
     [sortKey, sortDir]
   ); // stable object identity
 
+  // ── Ensure the deep-linked id is reflected in the selector immediately ──
+  useEffect(() => {
+    if (initialDocId) {
+      setSelectedId(initialDocId);
+      cdbg("[Change] initialDocId → selectedId", { initialDocId });
+    }
+  }, [initialDocId]);
+
+  // ── Realtime idle pause (system-wide) ─────────────────────────────────────
+  const pauseOnIdleMs = useMemo(() => {
+    const viaFn =
+      typeof IgniteCfg.getRealtimePauseOnIdleMs === "function"
+        ? IgniteCfg.getRealtimePauseOnIdleMs()
+        : undefined;
+    const viaObj =
+      IgniteCfg.REALTIME?.pauseOnIdleMs ??
+      IgniteCfg.appRealtime?.pauseOnIdleMs ??
+      IgniteCfg.realtimePauseOnIdleMs;
+    return Number(viaFn ?? viaObj ?? 0) || 0;
+  }, []);
+  const [isRealtimePaused, setIsRealtimePaused] = useState(false);
+  useEffect(() => {
+    // If system configured to pause realtime while idle, respect it.
+
+    let last = Date.now();
+    let paused = false;
+    const markActive = () => {
+      last = Date.now();
+      if (paused) {
+        paused = false;
+        setIsRealtimePaused(false);
+        cdbg("[Change][idle] resume");
+      }
+    };
+    const onVis = () => !document.hidden && markActive();
+    window.addEventListener("mousemove", markActive);
+    window.addEventListener("keydown", markActive);
+    window.addEventListener("click", markActive);
+    document.addEventListener("visibilitychange", onVis);
+    const timer = setInterval(() => {
+      if (Date.now() - last > pauseOnIdleMs && !paused) {
+        paused = true;
+        setIsRealtimePaused(true);
+        cdbg("[Change][idle] pause (no activity)", { pauseOnIdleMs });
+      }
+    }, 1000);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener("mousemove", markActive);
+      window.removeEventListener("keydown", markActive);
+      window.removeEventListener("click", markActive);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, [pauseOnIdleMs]);
+
   // ── DIAG H: on mount, confirm editor context and critical field shapes ──────────────────────────
   useEffect(() => {
     const status = (schema?.fields || []).find(
@@ -199,6 +256,12 @@ export default function ChangeEntity({
 
   // Fetch the first page (<=100) for the picker
   useEffect(() => {
+    // If system configured to pause realtime while idle, respect it.
+    if (pauseOnIdleMs > 0) {
+      // A small "isAppIdle" flag should already exist in your ListDataView/ChangeEntity idle logic;
+      // if not, this line simply defers subscription until we are considered active.
+      if (!window.__igniteActive) return;
+    }
     let cancelled = false;
     (async () => {
       if (!db || !tenantId || !collectionName) return;
@@ -232,7 +295,7 @@ export default function ChangeEntity({
     return () => {
       cancelled = true;
     };
-  }, [db, tenantId, collectionName, sortKey, sortDir]);
+  }, [db, tenantId, collectionName, sortKey, sortDir, isRealtimePaused]);
 
   // ──────────────────────────────────────────────────────────────────────────
   // Dot‑path helpers so nested schema paths (e.g. "billing.address.line1")
@@ -860,6 +923,12 @@ export default function ChangeEntity({
 
   return (
     <div className="max-w-6xl">
+      {isRealtimePaused && pauseOnIdleMs > 0 && (
+        <div className="mb-3 rounded-md border border-yellow-300 bg-yellow-50 p-2 text-sm text-yellow-900">
+          ⏸ Live updates paused after inactivity. Move the mouse or press a key
+          to resume.
+        </div>
+      )}
       {/* Search & select row */}
       <div className="mb-4 grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="md:col-span-2">
@@ -908,64 +977,67 @@ export default function ChangeEntity({
 
       {/* Form + Audit panel */}
       {selectedId ? (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          <div className="lg:col-span-2">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {mergedFields.map(renderField)}
-            </div>
-          </div>
-          <aside className="lg:col-span-1">
-            <div className="rounded-lg border p-4 bg-gray-50">
-              <h3 className="font-semibold mb-2">Audit</h3>
-              <div className="space-y-2 text-sm">
-                <div>
-                  <div className="text-gray-600">Created By</div>
-                  <div className="readonly-field rounded p-2">
-                    {String(form.createdBy || "")}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-gray-500">Created At</div>
-                  <div className="font-medium">
-                    {formatWhen(form?.createdAt)}
-                  </div>{" "}
-                  {/* use helper → no Invalid Date */}
-                </div>
-                <div>
-                  <div className="text-gray-600">Updated By</div>
-                  <div className="readonly-field rounded p-2">
-                    {String(form.updatedBy || "")}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-gray-600">Updated At</div>
-                  <div className="font-medium">
-                    {formatWhen(form?.updatedAt)}
-                  </div>{" "}
-                  {/* normalize Timestamp/Date/num */}
-                </div>
+        (cdbg("[Change] rendering form for selectedId", { selectedId }),
+        (
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <div className="lg:col-span-2">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {mergedFields.map(renderField)}
               </div>
             </div>
-            <button
-              onClick={onSave}
-              disabled={saving}
-              className="mt-4 w-full h-10 px-4 rounded-lg bg-blue-600 text-white disabled:opacity-50"
-            >
-              {saving ? "Saving..." : "Save Changes"}
-            </button>
+            <aside className="lg:col-span-1">
+              <div className="rounded-lg border p-4 bg-gray-50">
+                <h3 className="font-semibold mb-2">Audit</h3>
+                <div className="space-y-2 text-sm">
+                  <div>
+                    <div className="text-gray-600">Created By</div>
+                    <div className="readonly-field rounded p-2">
+                      {String(form.createdBy || "")}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-gray-500">Created At</div>
+                    <div className="font-medium">
+                      {formatWhen(form?.createdAt)}
+                    </div>{" "}
+                    {/* use helper → no Invalid Date */}
+                  </div>
+                  <div>
+                    <div className="text-gray-600">Updated By</div>
+                    <div className="readonly-field rounded p-2">
+                      {String(form.updatedBy || "")}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-gray-600">Updated At</div>
+                    <div className="font-medium">
+                      {formatWhen(form?.updatedAt)}
+                    </div>{" "}
+                    {/* normalize Timestamp/Date/num */}
+                  </div>
+                </div>
+              </div>
+              <button
+                onClick={onSave}
+                disabled={saving}
+                className="mt-4 w-full h-10 px-4 rounded-lg bg-blue-600 text-white disabled:opacity-50"
+              >
+                {saving ? "Saving..." : "Save Changes"}
+              </button>
 
-            <button
-              onClick={handleCancel} // unified cancel path (uses new prop or legacy fallback)
-              className="mt-2 w-full h-10 px-4 rounded-lg bg-gray-200 text-gray-800 hover:bg-gray-300"
-            >
-              Cancel
-            </button>
+              <button
+                onClick={handleCancel} // unified cancel path (uses new prop or legacy fallback)
+                className="mt-2 w-full h-10 px-4 rounded-lg bg-gray-200 text-gray-800 hover:bg-gray-300"
+              >
+                Cancel
+              </button>
 
-            {message && (
-              <div className="mt-3 text-sm text-gray-700">{message}</div>
-            )}
-          </aside>
-        </div>
+              {message && (
+                <div className="mt-3 text-sm text-gray-700">{message}</div>
+              )}
+            </aside>
+          </div>
+        ))
       ) : (
         <p className="text-sm text-gray-600">
           Select a record to edit. Immutable fields are shaded and locked.

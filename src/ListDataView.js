@@ -1,5 +1,3 @@
-/*eslint no-debugger: "off"*/ //* STEVE: allow debugger for interactive breakpoints REMOVE AFTER TESTING
-
 import React, {
   useState,
   useEffect,
@@ -525,7 +523,7 @@ const ListDataView = ({
     });
     // Optional interactive breakpoint: enable with window.__igniteBreakOnEdit = true
     // eslint-disable-next-line no-unused-expressions
-    if (typeof window !== "undefined" && window.__igniteBreakOnEdit) debugger;
+    // if (typeof window !== "undefined" && window.__igniteBreakOnEdit) debugger;
 
     setEditItem(item); // this toggles the component from list/table view → edit form
     setEditDocId(item?.id || null);
