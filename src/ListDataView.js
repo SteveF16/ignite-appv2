@@ -566,6 +566,49 @@ const ListDataView = ({
     return <div className="text-center py-8">Loading...</div>;
   }
 
+  // Cash-flow summary (safe on any shape of rows)
+  const renderCashFlowSummary = (rowsMaybe) => {
+    const rows = Array.isArray(rowsMaybe) ? rowsMaybe : [];
+    let income = 0,
+      expense = 0,
+      unreconciled = 0;
+    rows.forEach((r) => {
+      const type = (r.type || r?.data?.type || "").toString().toLowerCase();
+      const amt = Number(r.amount ?? r?.data?.amount ?? 0) || 0;
+      const rec = !!(r.reconciled ?? r?.data?.reconciled);
+      if (type === "income") income += amt;
+      if (type === "expense") expense += amt;
+      if (!rec) unreconciled += type === "income" ? amt : -amt;
+    });
+    const net = income - expense;
+    return (
+      <div className="mb-4 grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="p-3 rounded-lg border shadow-sm">
+          <div className="text-xs text-gray-500">Income</div>
+          <div className="text-lg font-semibold">{income.toFixed(2)}</div>
+        </div>
+        <div className="p-3 rounded-lg border shadow-sm">
+          <div className="text-xs text-gray-500">Expenses</div>
+          <div className="text-lg font-semibold">{expense.toFixed(2)}</div>
+        </div>
+        <div className="p-3 rounded-lg border shadow-sm">
+          <div className="text-xs text-gray-500">Net</div>
+          <div className="text-lg font-semibold">{net.toFixed(2)}</div>
+        </div>
+        <div className="p-3 rounded-lg border shadow-sm">
+          <div className="text-xs text-gray-500">Unreconciled</div>
+          <div className="text-lg font-semibold">{unreconciled.toFixed(2)}</div>
+        </div>
+      </div>
+    );
+  };
+
+  // Resolve a reliable collection key for conditional UI (e.g., transactions summary)
+  const effectiveCollectionKey =
+    collectionKeyProp ||
+    collectionIdForBranch(String(branch || "").replace(/^List\s+/i, "")) ||
+    "";
+
   // ────────────────────────────────────────────────────────────────────────────
   // Unified editor: render ChangeEntity instead of the legacy DataEntryForm.
   // This keeps a single edit surface (same as the Sidebar → Change Customer).
@@ -713,7 +756,13 @@ const ListDataView = ({
           )}
         </div>
       </div>
+
+      {/* Cash-flow summary (Transactions only) */}
+      {effectiveCollectionKey === "transactions" &&
+        renderCashFlowSummary(viewData)}
+
       {/* Scroll region — background travels with horizontal scroll (no “cut off” edge) */}
+
       <div className="overflow-x-auto rounded-2xl shadow-sm border border-gray-200 bg-gray-50">
         <table className="min-w-[1200px] w-full divide-y divide-gray-200 table-sticky">
           {/* Sticky header so labels remain visible while scrolling */}

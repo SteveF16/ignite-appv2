@@ -16,6 +16,8 @@ export const COLLECTIONS = {
   transactions: "transactions",
   invoices: "invoices",
   invoiceTemplates: "invoiceTemplates",
+  expenses: "expenses",
+  vendors: "vendors",
 };
 
 /** Map a sidebar branch label → collection id (Firestorm-safe string). */
@@ -29,6 +31,11 @@ export function collectionIdForBranch(branchLabel) {
       return COLLECTIONS.assets;
     case "Finances":
       return COLLECTIONS.transactions;
+    case "Expenses":
+      return COLLECTIONS.expenses;
+    case "Vendors":
+      return COLLECTIONS.vendors;
+
     case "InvoiceTemplates":
       // Special virtual branch used by "List Templates" screen
       return COLLECTIONS.invoiceTemplates;

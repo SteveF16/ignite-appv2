@@ -13,7 +13,10 @@ const NAV_LIST_COLLECTION = {
   // Invoices
   "Invoices|List Templates": COLLECTIONS.invoiceTemplates, // differs from branch "Invoices"
   "Invoices|List Invoices": COLLECTIONS.invoices,
-
+  "Expenses|List Expenses": COLLECTIONS.expenses,
+  "Vendors|List Vendors": COLLECTIONS.vendors,
+  "Finances|List Transactions": COLLECTIONS.transactions,
+  "Finances|Reconcile": COLLECTIONS.transactions,
   // Add more explicit overrides here if needed in the future.
 };
 

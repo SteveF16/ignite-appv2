@@ -6,6 +6,7 @@ import {
   getDocs,
   limit,
   orderBy,
+  //  where,
   query,
   updateDoc,
   serverTimestamp,
@@ -19,23 +20,18 @@ import { getAppId } from "./IgniteConfig"; // centralized appId
 //import { dbg } from "./debug"; // 🔎 gated logger (no behavior change)
 import * as IgniteCfg from "./IgniteConfig";
 
-// Generic, schema‑driven "Change <Entity>" editor for 10–20 tables.
-// - search-as-you-type picker (client-filtered for now; server rules later)
-// - locks immutable fields both visually and by stripping them from update payload
-// - standardized Audit panel visible on all entities (createdAt/By, updatedAt/By)
+// schemaUtils.js is for normalizing schema shapes and building picker labels so we don't
+// have to repeat that logic in multiple places.
+// It is used by both ListDataView and ChangeEntity. To prevent RUNTIME ERRORS!
+import {
+  COMMON_IMMUTABLE,
+  buildPickerLabel,
+  selectOptionsFrom,
+  normalizeSchema,
+} from "./schemaUtils";
 
-// Prefer customerNbr (your canonical key) so default search finds the record.
-const DEFAULT_SEARCH_KEYS = [
-  "name1",
-  "customerNbr",
-  "email",
-  "city",
-  "state",
-  "country",
-]; // align with customers schema
-const COMMON_IMMUTABLE = ["tenantId", "appId", "createdAt", "createdBy"]; // baseline immutables across all collections
+// ─────────────────────────────────────────────────────────────────────────────
 const EXCLUDE_ON_CHANGE = new Set(["createdAt", "updatedAt"]); // fields to exclude from onChange (e.g. timestamps)
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Back-compat DEBUG flag to avoid runtime "DBG_CHANGE is not defined".
 // Some render helpers still check this symbol directly; define it safely.
@@ -52,7 +48,16 @@ const DBG_CHANGE = (() => {
   }
 })();
 // ─────────────────────────────────────────────────────────────────────────────
-
+// Local debug helper: logs only when window.__igniteDebugChange is truthy
+const __dbgChange = (...args) => {
+  try {
+    if (typeof window !== "undefined" && window.__igniteDebugChange) {
+      console.log(...args);
+    }
+  } catch (_) {
+    ("Steve - Log Message failed, but no worries, continue.");
+  }
+};
 // ─────────────────────────────────────────────────────────────────────────────
 // Focused (opt-in) debug for Change screen (reads flag at call-time; bypass global dbg gate)
 const cdbg = (label, payload) => {
@@ -113,28 +118,43 @@ export default function ChangeEntity({
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
 
-  // Normalize schema helpers  // keep logic here so DataSchemas.js doesn't need immediate edits
-  const fields = schema?.fields ?? []; // array of { path/key, label, type, edit, immutable? }
-  const searchKeys = schema?.search?.keys?.length
-    ? schema.search.keys
-    : DEFAULT_SEARCH_KEYS; // per‑entity override
-  const collectionImmutable = schema?.meta?.immutable ?? []; // per‑entity list
-  const allImmutable = useMemo(
-    () => Array.from(new Set([...COMMON_IMMUTABLE, ...collectionImmutable])),
-    [collectionImmutable]
-  );
+  // Normalize schema once and use the safe, uniform shape everywhere.
+  const norm = normalizeSchema(schema, { entityLabel, collectionName });
+  //const fields = norm.fields;
+  const fields = Array.isArray(schema?.fields) ? schema.fields : [];
+  const searchKeys = norm.search.keys;
+  // Ensure we always have an array for collection-level immutable keys
+  const collectionImmutable = Array.isArray(schema?.meta?.immutable)
+    ? schema.meta.immutable
+    : [];
+  // Compose global + collection immutables once; use Set for O(1) checks
+  const allImmutable = new Set([...COMMON_IMMUTABLE, ...collectionImmutable]);
 
-  // Stabilize sorting so effects don't re-run on every render (prevents read loops)
-  const sortKey =
-    (schema?.list?.defaultSort && schema.list.defaultSort.key) ||
-    searchKeys[0] ||
-    "name1";
-  const sortDir =
-    (schema?.list?.defaultSort && schema.list.defaultSort.dir) === "desc"
-      ? "desc"
-      : "asc";
+  // Normalize/guard the schema shape so `.fields`, `.list`, `.search`, `.meta` are always safe.
+  // This prevents "Cannot read properties of undefined (reading 'fields')" when switching branches.
+  schema = normalizeSchema(schema, { entityLabel, collectionName });
+  if (!schema.fields?.length) {
+    console.log(
+      "[Change] warn: no schema.fields provided — falling back to discovered primitive fields",
+      schema?.fields
+    );
+  }
+
+  // 🔎 DIAGNOSTIC ONLY: confirm what arrived from the route
+  __dbgChange("[Change][diag] entry", {
+    entityLabel,
+    collectionNameProp: collectionName,
+    schemaHint: schema && (schema.collectionName || schema.collectionKey),
+  });
+
+  // Stabilize sorting so effects don't re-run on every render.
+  // IMPORTANT: Only sort when the schema explicitly provides a defaultSort.
+  // (Employees currently mounts with no schema; querying unsorted avoids empty result set.)
+  const sortKey = norm?.list?.defaultSort?.key; // undefined when no schema
+  const sortDir = norm?.list?.defaultSort?.dir === "desc" ? "desc" : "asc";
+
   const defaultSort = React.useMemo(
-    () => ({ key: sortKey, dir: sortDir }),
+    () => ({ key: sortKey || "(unsorted)", dir: sortDir }),
     [sortKey, sortDir]
   ); // stable object identity
 
@@ -195,12 +215,10 @@ export default function ChangeEntity({
 
   // ── DIAG H: on mount, confirm editor context and critical field shapes ──────────────────────────
   useEffect(() => {
-    const status = (schema?.fields || []).find(
+    const status = (norm?.fields || []).find(
       (f) => f.path === "employmentStatus"
     );
-    const type = (schema?.fields || []).find(
-      (f) => f.path === "employmentType"
-    );
+    const type = (norm?.fields || []).find((f) => f.path === "employmentType");
     cdbg("[Change] mount props", {
       entityLabel,
       collectionName,
@@ -209,7 +227,13 @@ export default function ChangeEntity({
       statusMeta: status,
       typeMeta: type,
     });
-  }, [entityLabel, collectionName, schema, sortKey, sortDir]);
+
+    if (!Array.isArray(norm?.fields)) {
+      cdbg(
+        "[Change] warn: no schema.fields provided — falling back to discovered primitive fields"
+      );
+    }
+  }, [entityLabel, collectionName, norm, sortKey, sortDir]);
 
   // load when a record is chosen (or deep‑linked via initialDocId)
   useEffect(() => {
@@ -256,26 +280,49 @@ export default function ChangeEntity({
 
   // Fetch the first page (<=100) for the picker
   useEffect(() => {
-    // If system configured to pause realtime while idle, respect it.
-    if (pauseOnIdleMs > 0) {
-      // A small "isAppIdle" flag should already exist in your ListDataView/ChangeEntity idle logic;
-      // if not, this line simply defers subscription until we are considered active.
-      if (!window.__igniteActive) return;
+    // Respect idle config, but don't depend on any external globals.
+    // Only gate when we are actually paused.
+    if (pauseOnIdleMs > 0 && isRealtimePaused) {
+      cdbg("[Change] picker: paused by idle", { pauseOnIdleMs });
+      return;
     }
+
     let cancelled = false;
     (async () => {
-      if (!db || !tenantId || !collectionName) return;
+      if (!db) {
+        cdbg("[Change] picker: skip (no db)");
+        return;
+      }
+      if (!tenantId) {
+        cdbg("[Change] picker: skip (no tenantId)");
+        return;
+      }
+      if (!collectionName) {
+        cdbg("[Change] picker: skip (no collectionName)");
+        return;
+      }
+
       try {
         const fullPath = tenantCollectionPath({
           appId,
           tenantId,
           key: collectionName,
         }); // centralized
+
         const constraints = [limit(100)];
         if (sortKey) {
           constraints.unshift(orderBy(sortKey, sortDir));
+          cdbg("[Change] picker: using orderBy", { sortKey, sortDir });
+        } else {
+          cdbg("[Change] picker: unsorted fetch (no schema.defaultSort)", {
+            collectionName,
+          });
         }
+
+        // STEVE - This builds a picker query for dropdown changes to employees/customers,etc. s
+
         const q = query(collection(db, fullPath), ...constraints);
+
         const snap = await getDocs(q);
         if (!cancelled) {
           setItems(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
@@ -287,6 +334,12 @@ export default function ChangeEntity({
             tenantId,
             appId,
           });
+
+          // 🔎 DIAG: show a few labels as they'll render in the dropdown
+          const labelsSample = snap.docs
+            .slice(0, 5)
+            .map((d) => buildPickerLabel(entityLabel, d.data(), d.id));
+          cdbg("[Change] picker labels sample", labelsSample);
         }
       } catch (e) {
         if (!cancelled) setMessage(String(e?.message || e));
@@ -522,7 +575,7 @@ export default function ChangeEntity({
     // Skip fields marked non-editable
     if (f.edit === false) return null;
 
-    const immutable = allImmutable.includes(key) || !!f.immutable; // lock via schema or global list
+    const immutable = allImmutable.has(key) || !!f.immutable;
     // ✅ For checkboxes we must derive a boolean, not a string; other inputs keep prior behavior.
     const value =
       type === "checkbox" ? !!getByPath(form, key) : getByPath(form, key) ?? "";
@@ -572,39 +625,11 @@ export default function ChangeEntity({
     if (type === "select") {
       // ✅ FIX: Support both `enum` **and** `options` (string[] | {value,label}[]) from schema.
       // This was the root cause of blank Employment selects in *Change Employee*.                // important
-      const fieldFromSchema =
-        (schema.fields || []).find(
-          (ff) => (ff.path || ff.key || ff.name) === key
-        ) || {};
-      const fromEnum =
-        Array.isArray(f.enum) && f.enum.length
-          ? f.enum
-          : Array.isArray(fieldFromSchema.enum)
-          ? fieldFromSchema.enum
-          : undefined;
-      const fromOptions =
-        Array.isArray(f.options) && f.options.length
-          ? f.options
-          : Array.isArray(fieldFromSchema.options)
-          ? fieldFromSchema.options
-          : undefined;
 
-      // Normalize into [{value,label}] regardless of source shape.
-      let source = [];
-      if (fromOptions) {
-        source = fromOptions.map((o) =>
-          typeof o === "string"
-            ? { value: o, label: o }
-            : {
-                value: String(o.value ?? ""),
-                label: String(o.label ?? o.value ?? ""),
-              }
-        );
-      } else if (fromEnum) {
-        source = fromEnum.map((v) => ({ value: String(v), label: String(v) }));
-      } else if (key.endsWith(".country")) {
+      let source = selectOptionsFrom(f, norm.fields);
+      if (!source.length && key.endsWith(".country")) {
         source = getCountryOptions();
-      } else if (key === "credit.currency") {
+      } else if (!source.length && key === "credit.currency") {
         source = getCurrencyOptions();
       }
 
@@ -911,7 +936,7 @@ export default function ChangeEntity({
     // Ensure 'status' carries the enum from schema even if discovered via primitives.
     const stitched = [...(fields || []), ...extra].map((f) => {
       if ((f.path || f.key || f.name) !== "status") return f;
-      const enumFromSchema = (schema.fields || []).find(
+      const enumFromSchema = (norm.fields || []).find(
         (ff) => (ff.path || ff.key || ff.name) === "status"
       )?.enum;
       return enumFromSchema?.length
@@ -958,19 +983,18 @@ export default function ChangeEntity({
             disabled={loading || !!initialDocId} /* lock when deep‑linked */
           >
             <option value="">— Choose —</option>
-            {filtered.map((it) => (
-              <option key={it.id} value={it.id}>
-                {/* try to form a helpful label: prefer number then name */}
-                {(it.customerNbr ||
-                  it.employeeNumber ||
-                  it.vendorNumber ||
-                  it.assetTag ||
-                  it.transactionId ||
-                  it.id) +
-                  " — " +
-                  (it.name1 || it.name || it.title || "")}
-              </option>
-            ))}
+
+            {/* STEVE - This is the change dropdown PICKLIST for Employees/Customers, etc */}
+
+            {filtered.map((it) => {
+              // Build a user-facing label (Employees → employee id — name, Customers → customer id — name, etc.)
+              const label = buildPickerLabel(entityLabel, it, it.id);
+              return (
+                <option key={it.id} value={it.id}>
+                  {label}
+                </option>
+              );
+            })}
           </select>
         </div>
       </div>

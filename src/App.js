@@ -1,6 +1,5 @@
 import React, { useContext, useState } from "react";
 import { signOut } from "firebase/auth";
-
 import { FirebaseContext } from "./AppWrapper";
 import Sidebar from "./Sidebar";
 import DataEntryForm from "./DataEntryForm";
@@ -26,10 +25,22 @@ const navigation = [
         name: "Customers",
         subBranches: ["Add Customer", "Change Customer", "List Customers"],
       },
+
+      {
+        name: "Vendors",
+        subBranches: ["Add Vendor", "Change Vendor", "List Vendors"],
+      },
+
       {
         name: "Employees",
         subBranches: ["Add Employee", "Change Employee", "List Employees"],
       },
+
+      {
+        name: "Expenses",
+        subBranches: ["Add Expense", "List Expenses"],
+      },
+
       {
         name: "Assets",
         subBranches: ["Add Asset", "Change Asset", "List Assets"],
@@ -40,6 +51,7 @@ const navigation = [
           "Add Transaction",
           "Change Transaction",
           "List Transactions",
+          "Reconcile",
         ],
       },
 
@@ -57,7 +69,9 @@ const navigation = [
 ];
 
 const App = () => {
-  const { auth, user, tenantId } = useContext(FirebaseContext);
+  // Null-guard so tests (or any code path) without a Provider don't explode
+  const ctx = useContext(FirebaseContext) || {};
+  const { auth, user, tenantId } = ctx;
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [selectedBranch, setSelectedBranch] = useState("Customers");
   const [selectedSubBranch, setSelectedSubBranch] = useState("Add Customer");

@@ -9,6 +9,7 @@
 const DataSchemas = {
   // --- Vendors ---
   "Add Vendor": [
+    { name: "vendorNbr", type: "text", placeholder: "Vendor Number (unique)" },
     { name: "vendorName", type: "text", placeholder: "Vendor Name" },
     { name: "contactPerson", type: "text", placeholder: "Contact Person" },
     { name: "email", type: "email", placeholder: "Email" },
@@ -177,6 +178,11 @@ const CustomersSchema = {
     ],
   },
 
+  // top-level defaultSort for tests and shared helpers (kept in addition to list.defaultSort)
+  defaultSort: { key: "customerNbr", dir: "asc" },
+  // picker label config drives dropdown text + unit tests
+  picker: { labelFields: ["customerNbr", "name1"] },
+
   list: {
     defaultSort: { key: "customerNbr", dir: "asc" },
     /**
@@ -315,13 +321,222 @@ export const CollectionSchemas = {
   customers: CustomersSchema, // lower-case alias used by code paths
   Customers: CustomersSchema, // Title-case alias for compatibility
 
+  Vendors: {
+    label: "Vendors",
+    collection: "vendors",
+
+    // Show "<vendorNbr> - <vendorName>" in pickers (mirrors Customers picker)
+    picker: { labelFields: ["vendorNbr", "vendorName"] },
+
+    list: {
+      defaultSort: { key: "vendorNbr", dir: "asc" },
+      columns: [
+        { path: "vendorNbr", label: "Vendor #" },
+        { path: "vendorName", label: "Vendor" },
+        { path: "contactPerson", label: "Contact" },
+        { path: "email", label: "Email" },
+        { path: "phone", label: "Phone" },
+        { path: "updatedAt", label: "Updated" },
+      ],
+    },
+    fields: [
+      {
+        path: "vendorNbr",
+        label: "Vendor Number",
+        type: "text",
+        required: true,
+        help: "Alphanumeric; must be unique within your company.",
+      },
+
+      // ── Restored & normalized fields for Vendor master ────────────────────────────────────────────
+      {
+        path: "vendorName",
+        label: "Vendor Name",
+        type: "text",
+        required: true,
+      }, // human-friendly name
+      { path: "contactPerson", label: "Contact Person", type: "text" },
+      { path: "email", label: "Email", type: "email" },
+      { path: "phone", label: "Phone", type: "tel" },
+      // Address (flat keeps renderer simple and matches your generic form)                             // inline-review
+      { path: "address1", label: "Address 1", type: "text" },
+      { path: "address2", label: "Address 2", type: "text" },
+      { path: "city", label: "City", type: "text" },
+      { path: "state", label: "State/Region", type: "text" },
+      { path: "postalCode", label: "Postal Code", type: "text" },
+      { path: "country", label: "Country", type: "text" },
+      // Optional business attributes                                                                  // inline-review
+      {
+        path: "paymentTerms",
+        label: "Payment Terms",
+        type: "text",
+        help: "e.g., Due on Receipt, Net 15/30/45",
+      },
+      { path: "taxId", label: "Tax Id", type: "text" }, // consider masking on list
+      { path: "website", label: "Website", type: "text" },
+      { path: "notes", label: "Notes", type: "textarea" },
+      // Tenant-customizable freeform fields                                                           // inline-review
+      {
+        path: "vendorUser1",
+        label: "Custom 1",
+        type: "text",
+        help: "Tenant-defined freeform.",
+      },
+      {
+        path: "vendorUser2",
+        label: "Custom 2",
+        type: "text",
+        help: "Tenant-defined freeform.",
+      },
+      {
+        path: "vendorUser3",
+        label: "Custom 3",
+        type: "text",
+        help: "Tenant-defined freeform.",
+      },
+      {
+        path: "vendorUser4",
+        label: "Custom 4",
+        type: "text",
+        help: "Tenant-defined freeform.",
+      },
+      {
+        path: "vendorUser5",
+        label: "Custom 5",
+        type: "text",
+        help: "Tenant-defined freeform.",
+      },
+    ],
+  },
+
+  Expenses: {
+    label: "Expenses",
+    collection: "expenses",
+    list: {
+      defaultSort: { key: "expenseDate", dir: "desc" },
+      columns: [
+        { path: "expenseDate", label: "Date" },
+
+        { path: "vendorNbr", label: "Vendor #" }, // business key on expense                          // inline-review
+        { path: "vendorName", label: "Vendor" }, // denormalized at write for fast list               // inline-review
+
+        { path: "category", label: "Category" },
+        { path: "amount", label: "Amount" },
+        { path: "paymentMethod", label: "Method" },
+        { path: "updatedAt", label: "Updated" },
+      ],
+    },
+    fields: [
+      { path: "expenseDate", label: "Date", type: "date", required: true },
+      {
+        path: "vendorNbr",
+        label: "Vendor Number",
+        type: "picker", // dropdown tied to Vendors collection                                 // inline-review
+        required: true,
+        picker: {
+          collection: "vendors",
+          valueKey: "vendorNbr",
+          labelFields: ["vendorNbr", "vendorName"],
+        }, // ensures only valid vendors can be selected                                         // inline-review
+        help: "Choose an existing Vendor from the dropdown (required).",
+      },
+
+      // Display-only, persisted fields used for referential integrity and fast lists.                 // inline-review
+      // The form renderer disables editing for these (Add & Change).                                  // inline-review
+      { path: "vendorId", label: "Vendor Id", type: "text", immutable: true },
+      {
+        path: "vendorName",
+        label: "Vendor Name",
+        type: "text",
+        immutable: true,
+      },
+
+      {
+        path: "category",
+        label: "Category",
+        type: "select",
+        options: [
+          "supplies",
+          "payroll",
+          "utilities",
+          "rent",
+          "marketing",
+          "taxes",
+          "other",
+        ],
+        required: true,
+      },
+      { path: "amount", label: "Amount", type: "number", required: true },
+      {
+        path: "paymentMethod",
+        label: "Payment Method",
+        type: "select",
+        options: ["cash", "check", "credit", "debit", "ach", "other"],
+      },
+      { path: "notes", label: "Notes", type: "textarea" },
+      // MVP receipt (stored inline as Data URL object {receiptName, receiptSize, receiptType, receiptDataUrl})
+      { path: "receipt", label: "Receipt Image", type: "file" },
+    ],
+  },
+
+  Finances: {
+    label: "Transactions",
+    collection: "transactions",
+    list: {
+      defaultSort: { key: "txnDate", dir: "desc" },
+      columns: [
+        { path: "txnDate", label: "Date" },
+        { path: "type", label: "Type" }, // "income" | "expense"
+        { path: "source", label: "Source" }, // "invoice:<id>" or "expense:<id>" or "manual"
+        { path: "category", label: "Category" }, // mirrors expense categories
+        { path: "amount", label: "Amount" },
+        { path: "reconciled", label: "Reconciled" },
+      ],
+    },
+    fields: [
+      { path: "txnDate", label: "Date", type: "date", required: true },
+      {
+        path: "type",
+        label: "Type",
+        type: "select",
+        options: ["income", "expense"],
+        required: true,
+      },
+      { path: "source", label: "Source", type: "text" },
+      { path: "category", label: "Category", type: "text" },
+      { path: "amount", label: "Amount", type: "number", required: true },
+      { path: "notes", label: "Notes", type: "textarea" },
+      { path: "reconciled", label: "Reconciled", type: "checkbox" },
+      {
+        path: "reconciledAt",
+        label: "Reconciled At",
+        type: "date",
+        hideOnAdd: true,
+      },
+      {
+        path: "reconciledBy",
+        label: "Reconciled By",
+        type: "text",
+        hideOnAdd: true,
+      },
+    ],
+  },
+
   // ──────────────────────────────────────────────────────────────────────────
-  // Invoices (data instances) — values are mostly driven by a chosen template
-  // Audit fields stay immutable; business fields are dynamic via template.
+
   Invoices: {
     label: "Invoices",
     collection: "invoices",
-    list: { defaultSort: { key: "createdAt", dir: "desc" } },
+    list: {
+      defaultSort: { key: "updatedAt", dir: "desc" },
+      columns: [
+        { path: "invoiceNumber", label: "Invoice #" },
+        { path: "customerName", label: "Customer" },
+        { path: "total", label: "Total" },
+        { path: "paid", label: "Paid?" },
+        { path: "updatedAt", label: "Updated" },
+      ],
+    },
     meta: { immutable: ["tenantId", "appId", "createdAt", "createdBy"] },
     fields: [
       {
@@ -337,67 +552,62 @@ export const CollectionSchemas = {
         type: "text",
         required: true,
       },
-      {
-        path: "customer.name",
-        label: "Bill To: Name",
-        type: "text",
-        required: true,
-      },
-      { path: "customer.email", label: "Bill To: Email", type: "text" },
+      { path: "customerId", label: "Customer Id", type: "text" },
+      { path: "customerName", label: "Customer Name", type: "text" },
       { path: "issueDate", label: "Issue Date", type: "date", required: true },
       { path: "dueDate", label: "Due Date", type: "date", required: true },
-      // Dynamic payload slots written by the editor (do not render in generic form)
+      { path: "currency", label: "Currency", type: "text", required: true },
+      { path: "subTotal", label: "Subtotal", type: "number" },
+      { path: "taxTotal", label: "Tax", type: "number" },
+      { path: "total", label: "Total", type: "number" }, // a.k.a. grandTotal
+      { path: "paid", label: "Paid?", type: "checkbox" },
+      { path: "paidAt", label: "Paid At", type: "date", hideOnAdd: true },
+      // editor-only dynamic areas
       {
         path: "fields",
         label: "Dynamic Fields",
         type: "object",
         hideOnChange: true,
-        immutable: false,
       },
       {
         path: "lineItems",
         label: "Line Items",
         type: "object",
         hideOnChange: true,
-        immutable: false,
       },
-      { path: "currency", label: "Currency", type: "text", required: true },
-      { path: "subTotal", label: "Subtotal", type: "number" },
-      { path: "taxTotal", label: "Tax", type: "number" },
-      { path: "grandTotal", label: "Total", type: "number" },
       {
         path: "pdfUrl",
         label: "PDF URL",
         type: "text",
-        immutable: true,
         hideOnChange: true,
+        immutable: true,
       },
       // audit
       {
         path: "createdAt",
-        type: "date",
         label: "Created At",
+        type: "date",
         immutable: true,
         hideOnChange: true,
       },
       {
         path: "createdBy",
-        type: "text",
         label: "Created By",
+        type: "text",
         immutable: true,
         hideOnChange: true,
       },
       {
         path: "updatedAt",
-        type: "date",
         label: "Updated At",
+        type: "date",
         immutable: true,
         hideOnChange: true,
       },
       {
         path: "updatedBy",
-        type: "text",
         label: "Updated By",
+        type: "text",
         immutable: true,
         hideOnChange: true,
       },
@@ -470,20 +680,59 @@ export const CollectionSchemas = {
   // Employees (core profile). Sensitive fields (SSN, compensation) will live in a
   // protected subcollection and are *not* part of this schema.
   Employees: {
-    collectionName: "employees",
+    label: "Employees",
+    collection: "employees",
     addTitle: "Add Employee",
     changeTitle: "Change Employee",
     listTitle: "List Employees",
+
+    // Used by generic pickers and search bars
+    search: {
+      keys: [
+        "name1",
+        "lastName",
+        "firstName",
+        "empId",
+        "employeeId",
+        "email",
+        "department",
+        "title",
+      ],
+    },
+
+    // top-level defaultSort for tests and shared helpers
+    defaultSort: { key: "empId", dir: "asc" },
+    // picker label config drives dropdown text  unit tests
+    picker: { labelFields: ["empId", "name1"] },
+
+    list: {
+      defaultSort: { key: "lastName", dir: "asc" },
+    },
+
+    // Collection-level immutables used by ChangeEntity via allImmutable
+    meta: {
+      immutable: [
+        "tenantId",
+        "appId",
+        "createdAt",
+        "createdBy",
+        "updatedAt",
+        "updatedBy",
+      ],
+    },
+
     fields: [
       {
-        path: "employeeId",
-        label: "Employee ID",
+        path: "empId",
+        label: "Employee #",
         type: "text",
         required: true,
-        hideOnChange: true,
+        immutable: true,
+        editableOnCreate: true,
       },
-      { path: "firstName", label: "First Name", type: "text", required: true },
-      { path: "lastName", label: "Last Name", type: "text", required: true },
+      { path: "name1", label: "Name", type: "text" },
+      { path: "firstName", label: "First Name", type: "text" },
+      { path: "lastName", label: "Last Name", type: "text" },
       { path: "email", label: "Email", type: "email" },
       { path: "phoneNumber", label: "Phone", type: "text" },
       {
@@ -491,40 +740,40 @@ export const CollectionSchemas = {
         label: "Date of Birth",
         type: "date",
         immutable: true,
-      }, // PII display-only later
-      { path: "address.street", label: "Street", type: "text", required: true },
-      { path: "address.city", label: "City", type: "text", required: true },
-      { path: "address.state", label: "State", type: "text", required: true },
-      { path: "address.zipCode", label: "ZIP", type: "text", required: true },
-      { path: "hireDate", label: "Hire Date", type: "date", required: true },
+      },
+      { path: "address.street", label: "Street", type: "text" },
+      { path: "address.city", label: "City", type: "text" },
+      { path: "address.state", label: "State", type: "text" },
+      { path: "address.zipCode", label: "ZIP", type: "text" },
+      { path: "hireDate", label: "Hire Date", type: "date" },
 
       // Employment Status (required)
       {
-        path: "employmentStatus", // if you used nested paths, replace with "employment.status"
+        path: "employmentStatus",
         label: "Employment Status",
         type: "select",
         required: true,
         options: EMPLOYMENT_STATUS_OPTIONS,
         placeholder: "Select Employment status",
-        //        defaultValue: "Active",       <-- this hides the hint "select status"
       },
 
       // Employment Type
       {
-        path: "employmentType", // if you used nested paths, replace with "employment.type"
+        path: "employmentType",
         label: "Employment Type",
         type: "select",
         options: EMPLOYMENT_TYPE_OPTIONS,
-        allowBlank: true, // Adding this allows hint 'select value' to show
+        allowBlank: true,
         placeholder: "Select Employment type",
       },
 
-      { path: "department", label: "Department", type: "text" }, // will become lookup later
+      { path: "department", label: "Department", type: "text" },
       { path: "title", label: "Title", type: "text" },
       { path: "managerId", label: "Manager Employee ID", type: "text" },
 
       { path: "location", label: "Location", type: "text" },
       { path: "costCenter", label: "Cost Center", type: "text" },
+
       // Logical delete flags (no physical deletes)
       {
         path: "isDeleted",
@@ -547,19 +796,10 @@ export const CollectionSchemas = {
         immutable: true,
       },
     ],
-    list: [
-      { path: "employeeId", label: "ID" },
-      { path: "lastName", label: "Last" },
-      { path: "firstName", label: "First" },
-      { path: "email", label: "Email" },
-      { path: "employmentStatus", label: "Status" },
-      { path: "department", label: "Dept" },
-      { path: "title", label: "Title" },
-      { path: "updatedAt", label: "Updated" },
-    ],
-    defaultSort: { path: "lastName", dir: "asc" },
+
+    // Fields to include in CSV export (defaults to all non-object fields)
     csv: [
-      "employeeId",
+      "empId",
       "lastName",
       "firstName",
       "email",

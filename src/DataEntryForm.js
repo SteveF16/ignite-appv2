@@ -5,6 +5,11 @@ import {
   doc,
   updateDoc,
   serverTimestamp,
+  query,
+  where,
+  getDocs,
+  setDoc,
+  getDoc,
 } from "firebase/firestore";
 import { FirebaseContext } from "./AppWrapper";
 import { X, Save } from "lucide-react";
@@ -16,6 +21,15 @@ import { dbg } from "./debug"; // 🔎 gated logger (no behavior change)
 // ✅ Centralize collection ids + tenant path building to avoid casing drift across the app           // inline-review
 import { collectionIdForBranch, tenantCollectionPath } from "./collectionNames";
 import { getAppId } from "./IgniteConfig"; // single source of truth for app id                        // inline-review
+
+const fileToDataUrl = (file) =>
+  new Promise((resolve, reject) => {
+    if (!file) return resolve(null);
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = (e) => reject(e);
+    reader.readAsDataURL(file);
+  });
 
 // -----------------------------------------------------------------------------
 // Debug flag: when true, we log the exact Firestore collection path and doc id.
@@ -40,6 +54,38 @@ const formatDate = (d) => {
 };
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Confirm a vendor exists by id (preferred) or by common number fields (back-compat).                 // inline-review
+const vendorExists = async ({ db, appId, tenantId, vendorId, vendorNbr }) => {
+  const path = tenantCollectionPath({ appId, tenantId, key: "vendors" });
+  // 1) Fast path: check by document id (strong referential integrity)
+  if (vendorId) {
+    try {
+      const ref = doc(collection(db, path), String(vendorId));
+      const snap = await getDoc(ref);
+      if (snap.exists()) return true;
+    } catch (_) {
+      /* ignore */
+    }
+  }
+  // 2) Compat path: search by business key across common field names
+  const key = String(vendorNbr || "");
+  if (!key) return false;
+  const fields = [
+    "vendorNbr",
+    "vendorNumber",
+    "vendor_no",
+    "vendorNo",
+    "number",
+    "code",
+    "vendorCode",
+  ];
+  for (const f of fields) {
+    const qy = query(collection(db, path), where(f, "==", key));
+    const snap = await getDocs(qy);
+    if (!snap.empty) return true;
+  }
+  return false;
+};
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers: dot-path getters/setters for nested objects
 // NOTE: We keep these tiny and dependency-free to avoid pulling lodash.
@@ -58,33 +104,6 @@ const setByPath = (obj, path, value) => {
   cursor[last] = value;
   return obj;
 };
-
-// Convert various incoming shapes to the only thing <input type="date"> accepts: 'yyyy-mm-dd'
-// Accepts: '', Date, Firestore.Timestamp, ISO strings like '2025-09-19T00:00:00.000Z', or already 'yyyy-mm-dd'
-//const toYmdString = (val) => {
-// if (val === undefined || val === null || val === "") return "";
-//  if (typeof val === "string") {
-//    if (/^\d{4}-\d{2}-\d{2}$/.test(val)) return val; // already good
-//    const d = new Date(val);
-//    if (!Number.isNaN(d.getTime())) {
-//      const pad = (n) => String(n).padStart(2, "0");
-//      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-//    }
-//    return ""; // unknown string → blank to avoid browser warning loop
-//  }
-//  if (val instanceof Date) {
-//    const pad = (n) => String(n).padStart(2, "0");
-//    return `${val.getFullYear()}-${pad(val.getMonth() + 1)}-${pad(
-//      val.getDate()
-//    )}`;
-//  }
-//  if (val && typeof val.toDate === "function") {
-//    const d = val.toDate();
-//    const pad = (n) => String(n).padStart(2, "0");
-//    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-//  }
-//  return "";
-//}; */
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Targeted, quieter diagnostics for the form (toggle at runtime):
@@ -233,6 +252,8 @@ const DataEntryForm = ({ selectedBranch, initialData, onSave, onCancel }) => {
   const [formData, setFormData] = useState({});
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
+  const [vendorOptions, setVendorOptions] = useState([]); // populated when Expenses has vendor picker  // inline-review
+  const [vendorLoading, setVendorLoading] = useState(true); // show "Loading…" only while fetching       // inline-review
 
   // Use the same resolver the rest of the app uses; do NOT lowercase ad-hoc.                        // inline-review
   const collectionName = collectionIdForBranch(selectedBranch);
@@ -265,6 +286,89 @@ const DataEntryForm = ({ selectedBranch, initialData, onSave, onCancel }) => {
     () => (normalized ? flattenSchema(normalized) : []),
     [normalized]
   );
+
+  // Load Vendors for picker dropdown in Expenses Add form
+  useEffect(() => {
+    const hasVendorPicker = (schemaFields || []).some(
+      (f) =>
+        f.path === "vendorNbr" && (f.type === "picker" || f.type === "select")
+    );
+    if (!hasVendorPicker) return;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const appId = getAppId();
+        const fullPath = tenantCollectionPath({
+          appId,
+          tenantId,
+          key: "vendors",
+        });
+        const q = query(collection(db, fullPath));
+        const snap = await getDocs(q);
+
+        // ── DIAG: show raw vendor count + first doc for troubleshooting ────────────────────────────
+        dbg("[Vendors] snapshot", {
+          count: snap.size,
+          firstId: snap.docs[0]?.id,
+          firstData: snap.docs[0]?.data?.(),
+        });
+
+        // Be resilient to field naming drift: accept vendorNbr | vendorNumber | number | code | id
+        const opts = snap.docs
+          .map((d) => {
+            const r = { id: d.id, ...(d.data?.() ?? d.data()) }; // compat for older Firestore SDK typings
+            const vNbr =
+              r.vendorNbr ??
+              r.vendorNumber ??
+              r.vendor_no ??
+              r.vendorNo ??
+              r.number ??
+              r.code ??
+              r.vendorCode ??
+              r.id; // final fallback
+            const vName = r.vendorName ?? r.name ?? r.displayName ?? "";
+            // Label: "123 — Acme" (falls back gracefully)
+            const label = vName ? `${String(vNbr)} — ${vName}` : String(vNbr);
+            return {
+              id: r.id,
+              value: String(d.id), // ← FIX: picker value is ALWAYS the vendor document id
+              label,
+              meta: { vendorNbr: String(vNbr ?? ""), vendorName: vName },
+            };
+          })
+          // Drop badly shaped docs only if they have no usable key at all
+          .filter((o) => o.value);
+
+        dbg("[Vendors] derived options", {
+          count: opts.length,
+          sample: opts[0],
+        });
+
+        /* Minimal, targeted console view (no behavior changes) */ // debug-inline
+        if (opts.length) {
+          // Show the exact values the picker will render and bind to                                     // debug-inline
+          // Helps confirm whether value is a doc id vs. a vendor number                                  // debug-inline
+          // (We limit fields to keep logs clean.)                                                         // debug-inline
+          // eslint-disable-next-line no-console
+          console.table(
+            opts.map((o) => ({ id: o.id, value: o.value, label: o.label }))
+          );
+        }
+
+        if (!cancelled) {
+          setVendorOptions(opts);
+          setVendorLoading(false);
+        } // ← FIX: remove duplicate sets   // inline-review
+      } catch (e) {
+        console.error("Failed loading vendors for picker", e);
+        if (!cancelled) setVendorOptions([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [db, tenantId, schemaFields]);
 
   // ── DIAG B: show the flattened view the renderer will use (first few only) ──────────────────────
   useEffect(() => {
@@ -603,6 +707,156 @@ const DataEntryForm = ({ selectedBranch, initialData, onSave, onCancel }) => {
       const now = serverTimestamp();
       const actor = user?.email || user?.uid || "unknown";
 
+      // ---- Vendor & Expense validation / custom id logic ----
+      if (collectionName === "vendors") {
+        const vendorNbr = (clean.vendorNbr || "").trim();
+        if (!vendorNbr) {
+          alert("Vendor Number is required.");
+          return;
+        }
+
+        /* ───── Minimal, explicit debug before we change any logic ───── */ // debug-inline
+        const candidate = vendorOptions.find(
+          (o) => o.value === String(vendorNbr || "")
+        );
+        // eslint-disable-next-line no-console
+        console.info("[Expense] attempting to write using vendor key", {
+          tenantId,
+          vendorNbr,
+          vendorId: clean?.vendorId || null,
+          optionsCount: vendorOptions.length,
+          matchedOption: candidate
+            ? {
+                id: candidate.id,
+                value: candidate.value,
+                label: candidate.label,
+              }
+            : null,
+        });
+        const exists = await vendorExists({ db, appId, tenantId, vendorNbr });
+
+        if (exists) {
+          // eslint-disable-next-line no-console
+          console.warn("[Expense] vendor lookup FAILED", {
+            vendorNbr,
+            vendorId: clean?.vendorId || null,
+          });
+
+          alert(
+            `Vendor Number '${vendorNbr}' already exists for this company.`
+          );
+          return;
+        }
+        // Use vendorNbr as the doc id to guarantee uniqueness
+        await setDoc(doc(collection(db, collectionPath), vendorNbr), {
+          ...clean,
+          vendorNbr,
+          tenantId,
+          appId,
+          createdAt: serverTimestamp(),
+          createdBy: user?.email || "system",
+          updatedAt: serverTimestamp(),
+          updatedBy: user?.email || "system",
+        });
+        onSave?.();
+        return;
+      }
+
+      if (collectionName === "expenses") {
+        const vendorId = (clean.vendorId || "").trim(); // read the strong key (doc id)
+        if (!vendorId) {
+          alert("Expense must be linked to a vendor. Please select a vendor.");
+
+          return;
+        }
+
+        /* ───── Minimal, explicit debug before we change any logic ───── */ // debug-inline
+        const candidate = vendorOptions.find(
+          (o) => o.value === String(vendorId || "")
+        );
+        // eslint-disable-next-line no-console
+        console.info("[Expense] attempting to write using vendor key", {
+          tenantId,
+          vendorId: clean?.vendorId || null,
+          vendorNbr: clean?.vendorNbr || "(to-derive)",
+          optionsCount: vendorOptions.length,
+          matchedOption: candidate
+            ? {
+                id: candidate.id,
+                value: candidate.value,
+                label: candidate.label,
+              }
+            : null,
+        });
+
+        // If vendorNbr missing (legacy), derive it from vendor doc before we write                   // inline-review
+        if (!clean.vendorNbr) {
+          try {
+            const vPath = tenantCollectionPath({
+              appId: getAppId(),
+              tenantId,
+              key: "vendors",
+            });
+            const vSnap = await getDoc(doc(collection(db, vPath), vendorId));
+            const vData = vSnap.exists() ? vSnap.data() : null;
+            clean.vendorNbr =
+              vData?.vendorNbr ??
+              vData?.vendorNumber ??
+              vData?.vendor_no ??
+              vData?.vendorNo ??
+              vData?.number ??
+              vData?.code ??
+              vData?.vendorCode ??
+              vendorId; // last-resort fallback (doc id)
+
+            // NEW: persist friendly name alongside number for list views (denormalized for speed)
+            if (!clean.vendorName) {
+              clean.vendorName =
+                vData?.vendorName ?? vData?.name ?? vData?.displayName ?? ""; // inline-review
+            }
+          } catch (_) {
+            clean.vendorNbr = ""; // leave empty rather than exposing doc id
+            if (!clean.vendorName) clean.vendorName = "";
+          }
+        } else if (!clean.vendorName) {
+          // If number was already set but name wasn't, try to backfill name quickly
+          try {
+            const vPath = tenantCollectionPath({
+              appId: getAppId(),
+              tenantId,
+              key: "vendors",
+            });
+            const vSnap = await getDoc(doc(collection(db, vPath), vendorId));
+            const vData = vSnap.exists() ? vSnap.data() : null;
+            clean.vendorName =
+              vData?.vendorName ?? vData?.name ?? vData?.displayName ?? "";
+          } catch {
+            /* ignore; keep empty string */
+          }
+        }
+
+        const exists = await vendorExists({
+          db,
+          appId,
+          tenantId,
+          vendorId,
+          vendorNbr: clean.vendorNbr,
+        });
+
+        if (!exists) {
+          // eslint-disable-next-line no-console
+          console.warn("[Expense] vendor lookup FAILED", {
+            vendorId: clean?.vendorId || null,
+            vendorNbr: clean?.vendorNbr || "(unset)",
+          });
+
+          alert(
+            `Vendor was not found. Please re-select a vendor from the list and retry.`
+          );
+          return;
+        }
+      }
+
       if (isEditMode) {
         if (initialData && initialData.id) {
           const docRef = doc(db, collectionPath, initialData.id);
@@ -625,7 +879,53 @@ const DataEntryForm = ({ selectedBranch, initialData, onSave, onCancel }) => {
             updatedAt: now,
             updatedBy: actor,
           };
+
+          if (collectionName === "invoices" && clean.paid && !clean.paidAt)
+            updatePayload.paidAt = now;
+
           await updateDoc(docRef, updatePayload);
+
+          // ──────────────────────────────────────────────────────────
+          // Auto-transactions: INVOICE paid (Change mode → income txn)
+          // ──────────────────────────────────────────────────────────
+          if (collectionName === "invoices") {
+            const prevPaid = !!getByPath(initialData || {}, "paid");
+            const nextPaid = !!getByPath(formData || {}, "paid");
+            if (!prevPaid && nextPaid) {
+              try {
+                const txnPath = tenantCollectionPath({
+                  appId,
+                  tenantId,
+                  key: "transactions",
+                });
+                const incomeTxn = {
+                  txnDate: getByPath(formData, "paidAt") || serverTimestamp(),
+                  type: "income",
+                  source: `invoice:${initialData.id}`,
+                  category: "receivable",
+                  amount: Number(
+                    getByPath(formData, "total") ||
+                      getByPath(formData, "grandTotal") ||
+                      0
+                  ),
+                  tenantId,
+                  ...(appId ? { appId } : {}),
+                  reconciled: false,
+                  createdAt: now,
+                  createdBy: actor,
+                  updatedAt: now,
+                  updatedBy: actor,
+                };
+                await addDoc(collection(db, txnPath), incomeTxn);
+              } catch (e) {
+                console.warn(
+                  "Auto-transaction (invoice paid) failed (non-fatal):",
+                  e
+                );
+              }
+            }
+          }
+
           if (DEBUG_FIRESTORE) {
             console.log("[DataEntryForm] updated doc id:", initialData.id);
 
@@ -654,10 +954,65 @@ const DataEntryForm = ({ selectedBranch, initialData, onSave, onCancel }) => {
           updatedAt: now,
           updatedBy: actor,
         };
+
+        if (
+          collectionName === "invoices" &&
+          createPayload.paid &&
+          !createPayload.paidAt
+        ) {
+          createPayload.paidAt = now;
+        }
+
         const docRef = await addDoc(
           collection(db, collectionPath),
           createPayload
         );
+
+        // ──────────────────────────────────────────────────────────
+        // Auto-transactions (Create mode) — single, tidy block (removed duplicate nested try)         // inline-review
+        // ──────────────────────────────────────────────────────────
+        try {
+          const txnPath = tenantCollectionPath({
+            appId,
+            tenantId,
+            key: "transactions",
+          });
+          if (collectionName === "expenses") {
+            await addDoc(collection(db, txnPath), {
+              txnDate: createPayload.expenseDate || serverTimestamp(),
+              type: "expense",
+              source: `expense:${docRef.id}`,
+              category: createPayload.category || "other",
+              amount: Number(createPayload.amount || 0),
+              tenantId,
+              ...(appId ? { appId } : {}),
+              reconciled: false,
+              createdAt: now,
+              createdBy: actor,
+              updatedAt: now,
+              updatedBy: actor,
+            });
+          } else if (collectionName === "invoices" && !!createPayload.paid) {
+            await addDoc(collection(db, txnPath), {
+              txnDate: createPayload.paidAt || serverTimestamp(),
+              type: "income",
+              source: `invoice:${docRef.id}`,
+              category: "receivable",
+              amount: Number(
+                createPayload.total || createPayload.grandTotal || 0
+              ),
+              tenantId,
+              ...(appId ? { appId } : {}),
+              reconciled: false,
+              createdAt: now,
+              createdBy: actor,
+              updatedAt: now,
+              updatedBy: actor,
+            });
+          }
+        } catch (e) {
+          console.warn("Auto-transaction (create) failed (non-fatal):", e);
+        }
 
         if (DEBUG_FIRESTORE) {
           console.log("[DataEntryForm] created doc id:", docRef.id);
@@ -719,6 +1074,17 @@ const DataEntryForm = ({ selectedBranch, initialData, onSave, onCancel }) => {
         errors.push("Invalid phone");
       // number/date fields are handled by inputs themselves
     }
+
+    // Enforce that Expenses.vendorNbr matches a valid vendor option
+    if (collectionName === "expenses") {
+      const vId = getByPath(formData, "vendorId");
+      if (!vId) {
+        errors.push("Select a vendor from the list (vendor is required)."); // stricter + clearer
+      } else if (!vendorOptions.some((o) => o.value === String(vId))) {
+        errors.push("Selected vendor is not in the list. Please re-select."); // avoids stale values
+      }
+    }
+
     return errors;
   };
 
@@ -738,6 +1104,11 @@ const DataEntryForm = ({ selectedBranch, initialData, onSave, onCancel }) => {
     }
     return clone;
   };
+
+  // BIG FORM RENDERER. This could be broken down further but we want all the logic in one place for now.
+  // We rely on native HTML5 input types and validation as much as possible to minimize complexity.
+  // We do NOT use Formik or similar to keep control tight and avoid extra dependencies.
+  // We do NOT use a JSON Schema form generator because we want full control over the UX and DOM.
 
   return (
     <div className="p-6 bg-white rounded-lg shadow-xl">
@@ -768,6 +1139,8 @@ const DataEntryForm = ({ selectedBranch, initialData, onSave, onCancel }) => {
               options,
               enum: enumList,
               allowBlank,
+              required, // ← bring required into scope for vendor picker/use of native required          // inline-review
+              help, // ← bring help into scope so JSX `{help && …}` is defined                         // inline-review
             } = field;
             const placeholder =
               label ||
@@ -808,6 +1181,70 @@ const DataEntryForm = ({ selectedBranch, initialData, onSave, onCancel }) => {
                 first: (dynamicOptions || [])[0],
                 valueBound: getByPath(formData, path) ?? "(undefined)",
               });
+            }
+
+            // Special-case: Vendor picker (Expenses) — force dropdown tied to Vendors collection
+            if (
+              path === "vendorNbr" &&
+              (type === "picker" || type === "select")
+            ) {
+              return (
+                <div key={path}>
+                  <label
+                    htmlFor={path}
+                    className="block text-sm font-medium text-gray-700 mb-1"
+                  >
+                    {label}{" "}
+                    {required && <span className="text-red-500">*</span>}{" "}
+                    {/* native a11y hint */}
+                  </label>
+                  <select
+                    id="vendorId" /* bind select to vendorId even though field is vendorNbr */
+                    name="vendorId"
+                    required={required}
+                    disabled={locked}
+                    value={getByPath(formData, "vendorId") ?? ""} // control by vendorId (doc id)           // inline-review
+                    onChange={(e) => {
+                      const v = e.target.value; // doc id
+                      const match = vendorOptions.find((o) => o.value === v);
+                      setFormData((prev) => {
+                        const clone = structuredClone
+                          ? structuredClone(prev)
+                          : JSON.parse(JSON.stringify(prev));
+                        setByPath(clone, "vendorId", v); // strong FK
+                        setByPath(
+                          clone,
+                          "vendorNbr",
+                          match?.meta?.vendorNbr || v
+                        ); // human key fallback
+                        setByPath(
+                          clone,
+                          "vendorName",
+                          match?.meta?.vendorName || ""
+                        ); // denormalized name
+                        return clone;
+                      });
+                    }}
+                    className={`w-full p-2 border rounded-md focus:ring-blue-500 focus:border-blue-500 transition-colors ${
+                      locked ? "bg-gray-100 cursor-not-allowed" : ""
+                    }`}
+                  >
+                    <option value="" disabled>
+                      {vendorLoading
+                        ? "Loading…"
+                        : vendorOptions.length
+                        ? "Select a vendor…"
+                        : "No vendors found"}
+                    </option>
+                    {vendorOptions.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                  {help && <p className="text-xs text-gray-500 mt-1">{help}</p>}
+                </div>
+              );
             }
 
             // Special-case: State/Region — if US, show a dropdown of states, otherwise freeform.  // inline-review
@@ -932,6 +1369,56 @@ const DataEntryForm = ({ selectedBranch, initialData, onSave, onCancel }) => {
                     }`}
                     rows={4}
                   />
+                ) : type === "file" ? (
+                  <div className="space-y-2">
+                    <input
+                      id={path}
+                      name={path}
+                      type="file"
+                      accept="image/*,application/pdf"
+                      disabled={locked}
+                      onChange={async (e) => {
+                        const f = e.target.files?.[0];
+                        if (!f) {
+                          handleChange(path, null);
+                          return;
+                        }
+                        const dataUrl = await fileToDataUrl(f);
+                        // Store compact receipt object: name/size/type + dataUrl
+                        handleChange(path, {
+                          name: f.name,
+                          size: f.size,
+                          type: f.type,
+                          dataUrl,
+                        });
+                      }}
+                      className="w-full p-2 border rounded-md focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                    />
+                    {/* Tiny preview if it's an image */}
+                    {(() => {
+                      const val = getByPath(formData, path);
+                      const isImg = val?.type?.startsWith("image/");
+                      if (!val) return null;
+                      return (
+                        <div className="flex items-center gap-3">
+                          {isImg && (
+                            <img
+                              src={val.dataUrl}
+                              alt={val.name || "receipt"}
+                              className="h-14 w-14 object-cover rounded border"
+                            />
+                          )}
+                          <button
+                            type="button"
+                            className="text-xs px-2 py-1 rounded border"
+                            onClick={() => handleChange(path, null)}
+                          >
+                            Remove file
+                          </button>
+                        </div>
+                      );
+                    })()}
+                  </div>
                 ) : (
                   <input
                     id={path}
